@@ -15,5 +15,5 @@ class YuGiOhCardsDataset(Dataset):
     def __getitem__(self, index):
         # TODO: apply tokenization before this so we can make the dataset independent of the tokenizer?
         X = self.yugioh_dataset[index : index + self.context_length]
-        y = self.yugioh_dataset[index + self.context_length]
+        y = self.yugioh_dataset[index + 1 : index + 1 + self.context_length]
         return self.tokenizer.encode(X), self.tokenizer.encode(y)

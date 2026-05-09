@@ -45,6 +45,7 @@ class CharTokenizer(Tokenizer):
         return tensor([self.c_to_i[c] for c in s])
 
     def decode(self, ix: Tensor) -> str:
+        # TODO decoder zou miss niet moeten stringifyen en ook met batches om kunnen.
         if not self.i_to_c:
             raise Exception("Forgot to load tokenizer mapping")
         return "".join(self.i_to_c[i.item()] for i in ix)
