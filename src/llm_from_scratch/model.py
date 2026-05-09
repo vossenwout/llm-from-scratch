@@ -2,7 +2,7 @@ import math
 import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
-from torch.nn import Linear, Module, Embedding, CrossEntropyLoss
+from torch.nn import Linear, Module, Embedding, CrossEntropyLoss, Parameter
 from torch import Tensor, accelerator, optim
 
 from llm_from_scratch.tokenizer import CharTokenizer
@@ -28,6 +28,36 @@ def fetch_device():
 class Decoder(Module):
     def __init__(self):
         super().__init__()
+
+
+class Attention(Module):
+    """Attention as described by Attention is all you need"""
+
+    def __init__(
+        self, embedding_dim: int, device: str, h: int = 8, masked: bool = True
+    ):
+        super().__init__()
+        self.d = embedding_dim // h
+        self.masked = masked
+        self.wq = Linear(embedding_dim, self.d, bias=False).to(device)
+        self.wk = Linear(embedding_dim, self.d, bias=False).to(device)
+        self.wv = Linear(embedding_dim, self.d, bias=False).to(device)
+
+    def forward(self, x: Tensor) -> Tensor:
+        # input is B x T x C
+        # each B x T x d
+        q, k, v = self.wq(x), self.wk(x), self.wv(x)
+        # B x T x T
+        q_kt = q @ k.transpose(1, 2)
+        if self.masked:  # can't attend future tokens
+            mask = torch.ones_like(q_kt, dtype=torch.bool).triu(diagonal=1)
+            q_kt = q_kt.masked_fill(
+                mask, float("-inf")
+            )  # -inf instead of 0 as we can have negatives
+        q_kt = q_kt / math.sqrt(self.d)
+        q_kt = q_kt.softmax(2)
+        # B x T x d
+        return q_kt @ v
 
 
 class PosEncoding(Module):
