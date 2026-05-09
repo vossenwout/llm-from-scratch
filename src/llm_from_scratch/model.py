@@ -2,11 +2,10 @@ import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
 from torch.nn import Linear, Module, Embedding, CrossEntropyLoss
-from torch import Tensor, accelerator
+from torch import Tensor, accelerator, optim
 
 from llm_from_scratch.tokenizer import CharTokenizer
 from llm_from_scratch.dataset import YuGiOhCardsDataset
-from typing import Optional
 
 torch.manual_seed(42)
 
@@ -14,11 +13,11 @@ TRAIN_DATASET = "data/train_set.txt"
 TEST_DATASET = "data/test_set.txt"
 TOKENIZER = CharTokenizer(mapping_path=Path("data/dataset-tokenizer.json"))
 EMBEDDING_DIM = 512  # Attention all you need paper
-BATCH_SIZE = 8
-CONTEXT_LENGTH = 16  # pretty small for now
+BATCH_SIZE = 64
+CONTEXT_LENGTH = 64  # pretty small for now
 
 
-def device():
+def fetch_device():
     current_accelerator = accelerator.current_accelerator()
     if current_accelerator and accelerator.is_available():
         return current_accelerator.type
@@ -57,11 +56,8 @@ class Transformer(Module):
             num_embeddings=vocab_size, embedding_dim=embedding_dim
         )
         self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
-        self.loss = CrossEntropyLoss()
 
-    def forward(
-        self, input_ids: Tensor, target: Optional[Tensor] = None
-    ) -> tuple[Tensor, Tensor]:
+    def forward(self, input_ids: Tensor) -> tuple[Tensor, Tensor]:
         # B x T x C
         x = self.embedding(input_ids)
         # B x T x V
@@ -69,9 +65,6 @@ class Transformer(Module):
         # some sort of transform (reshape??)
         # B x V x T
         logits = logits.permute(0, 2, 1)
-        if target is not None:
-            loss = self.loss(logits, target)
-            return logits, loss
         return logits
 
 
@@ -82,7 +75,6 @@ def decode_pred(pred: Tensor):
     # B x T
     b_token_preds = pred.argmax(1)
     for i, token_preds in enumerate(b_token_preds):
-        print(f"--- Batch {i} ----")
         predicted_string = TOKENIZER.decode(token_preds)
         print(predicted_string)
 
@@ -98,7 +90,7 @@ def decode_input(X: Tensor):
         print(predicted_string)
 
 
-def train(device: str):
+def train(model: Module, loss_fn: Module, optimizer: optim.Optimizer, device: str):
     train_dataloader = DataLoader(
         YuGiOhCardsDataset(
             dataset_path=TRAIN_DATASET,
@@ -108,20 +100,25 @@ def train(device: str):
         batch_size=BATCH_SIZE,
     )
 
-    for batch_i, (X, y) in enumerate(train_dataloader):
-        # B x T
-        X = X.to(device)
-        # B x T
-        y = y.to(device)
-        # B x T x V, B
-        pred, loss = transformer(X, y)
-        decode_pred(pred)
+    model.train()
 
-        if batch_i == 0:
-            break
+    for batch, (X, y) in enumerate(train_dataloader):
+        # B x T, B x T
+        X, y = X.to(device), y.to(device)
+        # B x V x T, B
+        pred = model(X)
+        loss = loss_fn(pred, y)
+
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if batch % 100 == 0:
+            print(f"--- Batch: {batch} / {len(train_dataloader)} | Loss: {loss.item()}")
+            decode_pred(pred[0:1])
 
 
-def test(device: str):
+def test(model: Module, device: str):
     test_dataloader = DataLoader(
         YuGiOhCardsDataset(
             dataset_path=TEST_DATASET,
@@ -130,28 +127,29 @@ def test(device: str):
         ),
         batch_size=1,
     )
-    transformer = Transformer(
-        vocab_size=TOKENIZER.vocab_size(), embedding_dim=EMBEDDING_DIM
-    ).to(device)
 
-    for batch_i, (X, y) in enumerate(test_dataloader):
-        # B x T
-        X = X.to(device)
-        decode_input(X)
-        # B x T
-        y = y.to(device)
-        # B x T x V
-        pred = transformer(X)
-        decode_pred(pred)
+    model.eval()
+    with torch.no_grad():
+        for batch_i, (X, y) in enumerate(test_dataloader):
+            # B x T, B x T
+            X, y = X.to(device), y.to(device)
+            decode_input(X)
+            # B x T x V
+            pred = model(X)
+            decode_pred(pred)
 
-        if batch_i == 0:
-            break
+            if batch_i == 0:
+                break
 
 
-transformer = Transformer(
-    vocab_size=TOKENIZER.vocab_size(), embedding_dim=EMBEDDING_DIM
-).to(device)
+# Setup
+device = fetch_device()
+model = Transformer(vocab_size=TOKENIZER.vocab_size(), embedding_dim=EMBEDDING_DIM).to(
+    device
+)
+loss_fn = CrossEntropyLoss()
+# params from attention is all you need paper (without learning rate schedule)
+optimizer = optim.Adam(params=model.parameters(), betas=(0.9, 0.98), eps=10e-9)
 
-
-train(transformer, device=device())
-test(transformer, device=device())
+train(model=model, loss_fn=loss_fn, optimizer=optimizer, device=device)
+# test(model, device=device)
