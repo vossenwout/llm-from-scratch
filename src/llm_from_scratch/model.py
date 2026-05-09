@@ -1,3 +1,4 @@
+import math
 import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
@@ -24,42 +25,51 @@ def fetch_device():
     return "cpu"
 
 
-def _create_target(y: Tensor, device: str):
-    # For if we want to give class probabilities as target
-    # TODO: how do we do this in a tensor way instead of looping
-    # B x T x V
-    target = torch.empty(
-        (
-            BATCH_SIZE,
-            CONTEXT_LENGTH,
-            TOKENIZER.vocab_size(),
-        ),
-        device=device,
-    )
-    for b in range(BATCH_SIZE):
-        for t in range(CONTEXT_LENGTH):
-            target[b, t, y[b, t]] = 1
-
-    # B x V x T
-    return target.permute(0, 2, 1)
-
-
 class Decoder(Module):
     def __init__(self):
         super().__init__()
 
 
+class PosEncoding(Module):
+    def __init__(self, context_length: int, embedding_dim: int, device: str):
+        super().__init__()
+        # TODO: can we do this more efficient without looping?
+        # T x C
+        self.pos_encoding = torch.zeros(context_length, embedding_dim).to(device)
+        for pos in range(context_length):
+            for i in range(embedding_dim):
+                if i % 2 == 0:
+                    self.pos_encoding[pos, i] = math.sin(
+                        i / (10000 ** ((2 * i) / embedding_dim))
+                    )
+                else:
+                    self.pos_encoding[pos, i] = math.cos(
+                        i / (10000 ** ((2 * i) / embedding_dim))
+                    )
+
+    def forward(self, x: Tensor) -> Tensor:
+        # B x T x C
+        return x + self.pos_encoding
+
+
 class Transformer(Module):
-    def __init__(self, vocab_size: int, embedding_dim: int):
+    def __init__(
+        self, vocab_size: int, embedding_dim: int, context_length: int, device: str
+    ):
         super().__init__()
         self.embedding = Embedding(
             num_embeddings=vocab_size, embedding_dim=embedding_dim
         )
+        self.pos_encoding = PosEncoding(
+            context_length=context_length, embedding_dim=embedding_dim, device=device
+        )
         self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
 
-    def forward(self, input_ids: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(self, input_ids: Tensor) -> Tensor:
         # B x T x C
         x = self.embedding(input_ids)
+        # B x T x C
+        x = self.pos_encoding(x)
         # B x T x V
         logits = self.linear(x)
         # some sort of transform (reshape??)
@@ -144,9 +154,13 @@ def test(model: Module, device: str):
 
 # Setup
 device = fetch_device()
-model = Transformer(vocab_size=TOKENIZER.vocab_size(), embedding_dim=EMBEDDING_DIM).to(
-    device
-)
+model = Transformer(
+    vocab_size=TOKENIZER.vocab_size(),
+    embedding_dim=EMBEDDING_DIM,
+    context_length=CONTEXT_LENGTH,
+    device=device,
+).to(device)
+
 loss_fn = CrossEntropyLoss()
 # params from attention is all you need paper (without learning rate schedule)
 optimizer = optim.Adam(params=model.parameters(), betas=(0.9, 0.98), eps=10e-9)
