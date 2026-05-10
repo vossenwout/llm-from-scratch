@@ -2,7 +2,7 @@ import math
 import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
-from torch.nn import Linear, Module, Embedding, CrossEntropyLoss
+from torch.nn import Linear, Module, Embedding, CrossEntropyLoss, LayerNorm, ReLU
 from torch import Tensor, accelerator, optim
 
 from llm_from_scratch.tokenizer import CharTokenizer
@@ -16,6 +16,8 @@ TOKENIZER = CharTokenizer(mapping_path=Path("data/dataset-tokenizer.json"))
 EMBEDDING_DIM = 512  # Attention all you need paper
 BATCH_SIZE = 64
 CONTEXT_LENGTH = 64  # pretty small for now
+FF_HIDDEN_DIM = 2048  # Attention all you need paper
+ATTENTION_HEADS = 8  # Attention all you need paper
 
 
 def fetch_device():
@@ -25,8 +27,26 @@ def fetch_device():
     return "cpu"
 
 
+class FeedForward(Module):
+    def __init__(self, embedding_dim: int, hidden_dim: int, device: str):
+        super().__init__()
+        self.l1 = Linear(embedding_dim, hidden_dim, device=device)
+        self.l2 = Linear(hidden_dim, embedding_dim, device=device)
+        self.relu = ReLU()
+
+    def forward(self, x: Tensor) -> Tensor:
+        # input B x T x C
+        # B x T x H
+        x = self.l1(x)
+        x = self.relu(x)
+        # B x T x C
+        return self.l2(x)
+
+
 class Decoder(Module):
-    def __init__(self, embedding_dim: int, attention_heads: int, device: str):
+    def __init__(
+        self, embedding_dim: int, ff_hidden_dim: int, attention_heads: int, device: str
+    ):
         super().__init__()
         self.masked_multi_head_attention = MultiHeadAttention(
             embedding_dim=embedding_dim,
@@ -34,11 +54,18 @@ class Decoder(Module):
             device=device,
             masked=True,
         )
+        self.layer_norm_1 = LayerNorm(embedding_dim, device=device)
+        self.layer_norm_2 = LayerNorm(embedding_dim, device=device)
+        self.ff = FeedForward(
+            embedding_dim=embedding_dim, hidden_dim=ff_hidden_dim, device=device
+        )
 
     def forward(self, x: Tensor) -> Tensor:
-        # todo skipp connections and feed forward
         # B x T x C
-        return self.masked_multi_head_attention(x)
+        x = self.masked_multi_head_attention(x) + x
+        x = self.layer_norm_1(x)
+        x = self.ff(x) + x
+        return self.layer_norm_2(x)
 
 
 class Attention(Module):
@@ -48,7 +75,7 @@ class Attention(Module):
         self, embedding_dim: int, attention_heads: int, device: str, masked: bool
     ):
         super().__init__()
-        self.d = embedding_dim // attention_heads
+        self.d = embedding_dim // attention_heads  # attention all you need paper
         self.masked = masked
         self.wq = Linear(embedding_dim, self.d, bias=False).to(device)
         self.wk = Linear(embedding_dim, self.d, bias=False).to(device)
@@ -126,8 +153,9 @@ class Transformer(Module):
         vocab_size: int,
         embedding_dim: int,
         context_length: int,
+        attention_heads: int,
+        ff_hidden_dim: int,
         device: str,
-        attention_heads: int = 8,
     ):
         super().__init__()
         self.embedding = Embedding(
@@ -137,7 +165,10 @@ class Transformer(Module):
             context_length=context_length, embedding_dim=embedding_dim, device=device
         )
         self.decoder = Decoder(
-            embedding_dim=embedding_dim, attention_heads=attention_heads, device=device
+            embedding_dim=embedding_dim,
+            attention_heads=attention_heads,
+            ff_hidden_dim=ff_hidden_dim,
+            device=device,
         )
         self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
 
@@ -236,6 +267,8 @@ model = Transformer(
     vocab_size=TOKENIZER.vocab_size(),
     embedding_dim=EMBEDDING_DIM,
     context_length=CONTEXT_LENGTH,
+    ff_hidden_dim=FF_HIDDEN_DIM,
+    attention_heads=ATTENTION_HEADS,
     device=device,
 ).to(device)
 
