@@ -2,7 +2,15 @@ import math
 import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
-from torch.nn import Linear, Module, Embedding, CrossEntropyLoss, LayerNorm, ReLU
+from torch.nn import (
+    Linear,
+    Module,
+    Embedding,
+    CrossEntropyLoss,
+    LayerNorm,
+    ReLU,
+    Dropout,
+)
 from torch import Tensor, accelerator, optim
 
 from llm_from_scratch.tokenizer import CharTokenizer
@@ -13,11 +21,14 @@ torch.manual_seed(42)
 TRAIN_DATASET = "data/train_set.txt"
 TEST_DATASET = "data/test_set.txt"
 TOKENIZER = CharTokenizer(mapping_path=Path("data/dataset-tokenizer.json"))
+VAL_BATCHES = 5
 EMBEDDING_DIM = 512  # Attention all you need paper
 BATCH_SIZE = 64
 CONTEXT_LENGTH = 64  # pretty small for now
 FF_HIDDEN_DIM = 2048  # Attention all you need paper
 ATTENTION_HEADS = 8  # Attention all you need paper
+N_DECODERS = 6  # Attention all you need paper
+P_DROPOUT = 0.1  # Attention all you need paper
 
 
 def fetch_device():
@@ -45,7 +56,12 @@ class FeedForward(Module):
 
 class Decoder(Module):
     def __init__(
-        self, embedding_dim: int, ff_hidden_dim: int, attention_heads: int, device: str
+        self,
+        embedding_dim: int,
+        ff_hidden_dim: int,
+        attention_heads: int,
+        p_dropout: float,
+        device: str,
     ):
         super().__init__()
         self.masked_multi_head_attention = MultiHeadAttention(
@@ -59,10 +75,11 @@ class Decoder(Module):
         self.ff = FeedForward(
             embedding_dim=embedding_dim, hidden_dim=ff_hidden_dim, device=device
         )
+        self.dropout = Dropout(p=p_dropout)
 
     def forward(self, x: Tensor) -> Tensor:
         # B x T x C
-        x = self.masked_multi_head_attention(x) + x
+        x = self.dropout(self.masked_multi_head_attention(x)) + x
         x = self.layer_norm_1(x)
         x = self.ff(x) + x
         return self.layer_norm_2(x)
@@ -126,8 +143,11 @@ class MultiHeadAttention(Module):
 
 
 class PosEncoding(Module):
-    def __init__(self, context_length: int, embedding_dim: int, device: str):
+    def __init__(
+        self, context_length: int, embedding_dim: int, p_dropout: float, device: str
+    ):
         super().__init__()
+        self.dropout = Dropout(p=p_dropout)
         # TODO: can we do this more efficient without looping?
         # T x C
         self.pos_encoding = torch.zeros(context_length, embedding_dim).to(device)
@@ -144,7 +164,7 @@ class PosEncoding(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         # B x T x C
-        return x + self.pos_encoding
+        return self.dropout(x + self.pos_encoding)
 
 
 class Transformer(Module):
@@ -155,6 +175,8 @@ class Transformer(Module):
         context_length: int,
         attention_heads: int,
         ff_hidden_dim: int,
+        n_decoders: int,
+        p_dropout: float,
         device: str,
     ):
         super().__init__()
@@ -162,15 +184,22 @@ class Transformer(Module):
             num_embeddings=vocab_size, embedding_dim=embedding_dim
         )
         self.pos_encoding = PosEncoding(
-            context_length=context_length, embedding_dim=embedding_dim, device=device
-        )
-        self.decoder = Decoder(
+            context_length=context_length,
             embedding_dim=embedding_dim,
-            attention_heads=attention_heads,
-            ff_hidden_dim=ff_hidden_dim,
+            p_dropout=p_dropout,
             device=device,
         )
         self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
+        self.decoders = [
+            Decoder(
+                embedding_dim=embedding_dim,
+                attention_heads=attention_heads,
+                ff_hidden_dim=ff_hidden_dim,
+                p_dropout=p_dropout,
+                device=device,
+            )
+            for _ in range(n_decoders)
+        ]
 
     def forward(self, input_ids: Tensor) -> Tensor:
         # B x T x C
@@ -178,7 +207,8 @@ class Transformer(Module):
         # B x T x C
         x = self.pos_encoding(x)
         # B x T x V
-        x = self.decoder(x)
+        for decoder in self.decoders:
+            x = decoder(x)
         # B x T x V
         logits = self.linear(x)
         # some sort of transform (reshape??)
@@ -209,18 +239,34 @@ def decode_input(X: Tensor):
         print(predicted_string)
 
 
-def train(model: Module, loss_fn: Module, optimizer: optim.Optimizer, device: str):
-    train_dataloader = DataLoader(
-        YuGiOhCardsDataset(
-            dataset_path=TRAIN_DATASET,
-            context_length=CONTEXT_LENGTH,
-            tokenizer=TOKENIZER,
-        ),
-        batch_size=BATCH_SIZE,
-    )
+def estimate_val_loss(
+    model: Module, loss_fn: Module, val_dataloader: DataLoader, val_batches: int
+) -> tuple[float, float]:
+    model.eval()
+    losses = []
+    with torch.no_grad():
+        for batch, (X, y) in enumerate(val_dataloader):
+            X, y = X.to(device), y.to(device)
+            pred = model(X)
+            losses.append(loss_fn(pred, y).item())
 
+            if batch == val_batches - 1:
+                break
+    loss = sum(losses) / len(losses)
     model.train()
+    return loss, math.exp(loss)
 
+
+def train(
+    model: Module,
+    loss_fn: Module,
+    optimizer: optim.Optimizer,
+    train_dataloader: DataLoader,
+    val_dataloader: DataLoader,
+    val_batches: int,
+    device: str,
+):
+    model.train()
     for batch, (X, y) in enumerate(train_dataloader):
         # B x T, B x T
         X, y = X.to(device), y.to(device)
@@ -233,32 +279,16 @@ def train(model: Module, loss_fn: Module, optimizer: optim.Optimizer, device: st
         optimizer.zero_grad()
 
         if batch % 100 == 0:
-            print(f"--- Batch: {batch} / {len(train_dataloader)} | Loss: {loss.item()}")
+            val_loss, perplexity = estimate_val_loss(
+                model=model,
+                loss_fn=loss_fn,
+                val_dataloader=val_dataloader,
+                val_batches=val_batches,
+            )
+            print(
+                f"--- Batch: {batch} / {len(train_dataloader)} | Train Loss: {loss.item()} | Val Loss: {val_loss} | Perplexity: {perplexity}"
+            )
             decode_pred(pred[0:1])
-
-
-def test(model: Module, device: str):
-    test_dataloader = DataLoader(
-        YuGiOhCardsDataset(
-            dataset_path=TEST_DATASET,
-            context_length=CONTEXT_LENGTH,
-            tokenizer=TOKENIZER,
-        ),
-        batch_size=1,
-    )
-
-    model.eval()
-    with torch.no_grad():
-        for batch_i, (X, y) in enumerate(test_dataloader):
-            # B x T, B x T
-            X, y = X.to(device), y.to(device)
-            decode_input(X)
-            # B x T x V
-            pred = model(X)
-            decode_pred(pred)
-
-            if batch_i == 0:
-                break
 
 
 # Setup
@@ -269,12 +299,40 @@ model = Transformer(
     context_length=CONTEXT_LENGTH,
     ff_hidden_dim=FF_HIDDEN_DIM,
     attention_heads=ATTENTION_HEADS,
+    n_decoders=N_DECODERS,
+    p_dropout=P_DROPOUT,
     device=device,
 ).to(device)
+
+train_dataloader = DataLoader(
+    YuGiOhCardsDataset(
+        dataset_path=TRAIN_DATASET,
+        context_length=CONTEXT_LENGTH,
+        tokenizer=TOKENIZER,
+    ),
+    batch_size=BATCH_SIZE,
+)
+
+test_dataloader = DataLoader(
+    YuGiOhCardsDataset(
+        dataset_path=TEST_DATASET,
+        context_length=CONTEXT_LENGTH,
+        tokenizer=TOKENIZER,
+    ),
+    batch_size=1,
+)
 
 loss_fn = CrossEntropyLoss()
 # params from attention is all you need paper (without learning rate schedule)
 optimizer = optim.Adam(params=model.parameters(), betas=(0.9, 0.98), eps=10e-9)
 
-train(model=model, loss_fn=loss_fn, optimizer=optimizer, device=device)
-# test(model, device=device)
+train(
+    model=model,
+    loss_fn=loss_fn,
+    optimizer=optimizer,
+    train_dataloader=train_dataloader,
+    val_dataloader=test_dataloader,
+    val_batches=VAL_BATCHES,
+    device=device,
+)
+# test(model, test_dataloader=test_dataloader, device=device)
