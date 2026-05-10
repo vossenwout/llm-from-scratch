@@ -2,7 +2,7 @@ import math
 import torch
 from torch.utils.data import DataLoader
 from pathlib import Path
-from torch.nn import Linear, Module, Embedding, CrossEntropyLoss, Parameter
+from torch.nn import Linear, Module, Embedding, CrossEntropyLoss
 from torch import Tensor, accelerator, optim
 
 from llm_from_scratch.tokenizer import CharTokenizer
@@ -26,18 +26,29 @@ def fetch_device():
 
 
 class Decoder(Module):
-    def __init__(self):
+    def __init__(self, embedding_dim: int, attention_heads: int, device: str):
         super().__init__()
+        self.masked_multi_head_attention = MultiHeadAttention(
+            embedding_dim=embedding_dim,
+            attention_heads=attention_heads,
+            device=device,
+            masked=True,
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        # todo skipp connections and feed forward
+        # B x T x C
+        return self.masked_multi_head_attention(x)
 
 
 class Attention(Module):
     """Attention as described by Attention is all you need"""
 
     def __init__(
-        self, embedding_dim: int, device: str, h: int = 8, masked: bool = True
+        self, embedding_dim: int, attention_heads: int, device: str, masked: bool
     ):
         super().__init__()
-        self.d = embedding_dim // h
+        self.d = embedding_dim // attention_heads
         self.masked = masked
         self.wq = Linear(embedding_dim, self.d, bias=False).to(device)
         self.wk = Linear(embedding_dim, self.d, bias=False).to(device)
@@ -49,15 +60,42 @@ class Attention(Module):
         q, k, v = self.wq(x), self.wk(x), self.wv(x)
         # B x T x T
         q_kt = q @ k.transpose(1, 2)
+        q_kt = q_kt / math.sqrt(self.d)
         if self.masked:  # can't attend future tokens
             mask = torch.ones_like(q_kt, dtype=torch.bool).triu(diagonal=1)
             q_kt = q_kt.masked_fill(
                 mask, float("-inf")
             )  # -inf instead of 0 as we can have negatives
-        q_kt = q_kt / math.sqrt(self.d)
         q_kt = q_kt.softmax(2)
         # B x T x d
         return q_kt @ v
+
+
+class MultiHeadAttention(Module):
+    def __init__(
+        self, embedding_dim: int, attention_heads: int, device: str, masked: bool
+    ):
+        super().__init__()
+        self.heads = [
+            Attention(
+                embedding_dim=embedding_dim,
+                attention_heads=attention_heads,
+                device=device,
+                masked=masked,
+            )
+            for _ in range(attention_heads)
+        ]
+        self.wo = Linear(embedding_dim, embedding_dim, device=device)
+
+    def forward(self, x: Tensor) -> Tensor:
+        # input is B x T x C
+        # todo can we easily make this fully parallel?
+        # each B x T x d
+        x_heads = [head(x) for head in self.heads]
+        # B x T x C
+        x = torch.cat(tensors=x_heads, dim=2)
+        # B x T x C
+        return self.wo(x)
 
 
 class PosEncoding(Module):
@@ -84,7 +122,12 @@ class PosEncoding(Module):
 
 class Transformer(Module):
     def __init__(
-        self, vocab_size: int, embedding_dim: int, context_length: int, device: str
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        context_length: int,
+        device: str,
+        attention_heads: int = 8,
     ):
         super().__init__()
         self.embedding = Embedding(
@@ -93,6 +136,9 @@ class Transformer(Module):
         self.pos_encoding = PosEncoding(
             context_length=context_length, embedding_dim=embedding_dim, device=device
         )
+        self.decoder = Decoder(
+            embedding_dim=embedding_dim, attention_heads=attention_heads, device=device
+        )
         self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
 
     def forward(self, input_ids: Tensor) -> Tensor:
@@ -100,6 +146,8 @@ class Transformer(Module):
         x = self.embedding(input_ids)
         # B x T x C
         x = self.pos_encoding(x)
+        # B x T x V
+        x = self.decoder(x)
         # B x T x V
         logits = self.linear(x)
         # some sort of transform (reshape??)
