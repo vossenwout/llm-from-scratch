@@ -1,8 +1,15 @@
+from dataclasses import dataclass
+from enum import Enum
 from abc import abstractmethod, ABC
 from pathlib import Path
 from torch import tensor, Tensor
 from typing import Optional
 import json
+
+
+class TokenizerType(Enum):
+    CHAR = "char"
+    BPE = "bpe"
 
 
 class Tokenizer(ABC):
@@ -14,9 +21,24 @@ class Tokenizer(ABC):
     def decode(self, ix: Tensor) -> str:
         pass
 
+    @abstractmethod
+    def vocab_size(self) -> int:
+        pass
+
+    @abstractmethod
+    def get_type(self) -> TokenizerType:
+        pass
+
+
+@dataclass
+class TokenizerConfig:
+    mapping_path: str
+    tokenizer_type: TokenizerType
+
 
 class CharTokenizer(Tokenizer):
     def __init__(self, mapping_path: Optional[Path] = None):
+        self.mapping_path = mapping_path
         if mapping_path:
             with open(mapping_path, "r") as f:
                 self.c_to_i = json.load(f)
@@ -45,10 +67,12 @@ class CharTokenizer(Tokenizer):
         return tensor([self.c_to_i[c] for c in s])
 
     def decode(self, ix: Tensor) -> str:
-        # TODO decoder zou miss niet moeten stringifyen en ook met batches om kunnen.
         if not self.i_to_c:
             raise Exception("Forgot to load tokenizer mapping")
         return "".join(self.i_to_c[i.item()] for i in ix)
+
+    def get_type(self) -> TokenizerType:
+        return TokenizerType.CHAR
 
 
 def build_tokenizer(input_dataset_path: Path):
@@ -61,6 +85,7 @@ def build_tokenizer(input_dataset_path: Path):
     )
 
 
+# Todo move this to a pytest
 def sanity_check(test_input: str, tokenizer_mapping_path: str):
     char_tokenizer = CharTokenizer(mapping_path=Path(tokenizer_mapping_path))
     encoded = char_tokenizer.encode(test_input)
