@@ -12,6 +12,7 @@ from torch.nn import (
 from torch import optim
 from llm_from_scratch.tokenizer import (
     CharTokenizer,
+    BPETokenizer,
     TokenizerConfig,
     TokenizerType,
 )
@@ -53,7 +54,7 @@ DATA_CONFIG = DataConfig(
 GOOD_TRAIN_CONFIG = TrainConfig(
     train_epochs=250,
     batch_size=64,
-    val_batches=5,
+    val_batches=20,
     adam_beta1=0.9,  # Attention is all you need paper
     adam_beta2=0.98,  # Attention is all you need paper
     adam_eps=1e-9,  # Attention is all you need paper
@@ -70,22 +71,22 @@ GOOD_MODEL_CONFIG = TransformerConfig(
 )
 
 TRAIN_CONFIG = TrainConfig(
-    train_epochs=1000,
+    train_epochs=3,
     batch_size=64,
     val_batches=20,
     adam_beta1=0.9,  # Attention is all you need paper
     adam_beta2=0.98,  # Attention is all you need paper
     adam_eps=1e-9,  # Attention is all you need paper
-    warmup_steps=1000,  # Attention is all you need paper
+    warmup_steps=2000,  # Attention is all you need paper
 )
 
 MODEL_CONFIG = TransformerConfig(
-    embedding_dim=128,  # Attention is all you need paper,
-    context_length=256,
-    attention_heads=4,  # Attention is all you need paper
-    ff_hidden_dim=4 * 128,  # Attention is all you need paper
-    n_decoders=2,  # Attention is all you need paper
-    p_dropout=0,  # Attention is all you need paper
+    embedding_dim=512,  # Attention is all you need paper,
+    context_length=32,
+    attention_heads=8,  # Attention is all you need paper
+    ff_hidden_dim=2048,  # Attention is all you need paper
+    n_decoders=6,  # Attention is all you need paper
+    p_dropout=0.1,  # Attention is all you need paper
 )
 
 # --- End train params ---
@@ -185,6 +186,10 @@ device = fetch_device()
 
 if TOKENIZER_CONFIG.tokenizer_type == TokenizerType.CHAR:
     tokenizer = CharTokenizer(mapping_path=Path(TOKENIZER_CONFIG.mapping_path))
+elif TOKENIZER_CONFIG.tokenizer_type == TokenizerType.BPE:
+    tokenizer = BPETokenizer(mapping_path=Path(TOKENIZER_CONFIG.mapping_path))
+else:
+    raise ValueError(f"Invalid tokenizer type: {TOKENIZER_CONFIG.tokenizer_type}")
 
 model = Transformer(
     vocab_size=tokenizer.vocab_size(),

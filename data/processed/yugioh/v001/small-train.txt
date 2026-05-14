@@ -1,0 +1,23 @@
+<card>
+name: new world formation
+type: trap
+description: target 1 spell/trap in your gy that mentions "visas starfrost"; set it, and if you set a trap or quick-play spell, it can be activated this turn. you can banish this card from your gy, then target 3 spells/traps in your gy that mention "visas starfrost", except "new world formation"; shuffle them into the deck. you can only use each effect of "new world formation" once per turn.
+</card>
+
+<card>
+name: super strident blaze
+type: spell
+sub_type: equip
+description: equip only to a machine fusion monster. your opponent cannot activate cards or effects during your battle phase. at the end of the damage step, if the equipped monster attacked an opponent's monster: you can banish 1 "cyber dragon" monster from your gy; the equipped monster can attack an opponent's monster again in a row. your other monsters cannot attack the turn you activate this effect.
+</card>
+
+<card>
+name: gorgonic gargoyle
+type: monster
+sub_type: [rock／effect]
+attribute: dark
+rank: level 3
+attack: 1000
+defense: 800
+description: when you normal summon a rock-type monster: you can special summon this card from your hand.
+</card>

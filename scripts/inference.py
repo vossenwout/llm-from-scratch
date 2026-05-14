@@ -8,12 +8,13 @@ from llm_from_scratch.tokenizer import (
     CharTokenizer,
     TokenizerConfig,
     TokenizerType,
+    BPETokenizer,
 )
 from pathlib import Path
 
 # --- Params ---
 
-MODEL_PATH = "model/2026-05-13_18-52-43/model.pt"
+MODEL_PATH = "model/2026-05-14_12-09-58/model.pt"
 MAX_TOKENS_TO_GENERATE = 1000
 TEMPERATURE = 1.0
 
@@ -25,6 +26,10 @@ tokenizer_config = TokenizerConfig(**model_checkpoint["tokenizer_config"])
 
 if tokenizer_config.tokenizer_type == TokenizerType.CHAR:
     tokenizer = CharTokenizer(mapping_path=Path(tokenizer_config.mapping_path))
+elif tokenizer_config.tokenizer_type == TokenizerType.BPE:
+    tokenizer = BPETokenizer(mapping_path=Path(tokenizer_config.mapping_path))
+else:
+    raise ValueError(f"Invalid tokenizer type: {tokenizer_config.tokenizer_type}")
 
 model_config = TransformerConfig(**model_checkpoint["model_config"])
 model = Transformer(
