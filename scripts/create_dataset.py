@@ -10,17 +10,17 @@ DATASET = "hammadus/yugioh-full-card-database-index-august-1st-2025"
 DATA_DIR = Path("data")
 RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed" / "yugioh" / "v001"
-TEST_SIZE = 0.1
+VAL_SIZE = 0.1
 
 dataset_paths = sorted(RAW_DATA_DIR.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
 dataset_path = dataset_paths[0]
 
 dataset = pd.read_csv(dataset_path)
 dataset = dataset.drop_duplicates(subset="name")
-train_df, test_df = train_test_split(
+train_df, val_df = train_test_split(
     dataset,
     random_state=42,
-    test_size=TEST_SIZE,
+    test_size=VAL_SIZE,
 )
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -50,7 +50,7 @@ def serialize_card(card_row: Series):
 
 
 card_set = set()
-n_test_set = 0
+n_val_set = 0
 n_train_set = 0
 
 with open(PROCESSED_DATA_DIR / "all.txt", "w") as dataset_f:
@@ -62,26 +62,26 @@ with open(PROCESSED_DATA_DIR / "all.txt", "w") as dataset_f:
                 train_f.write(formatted)
                 n_train_set += 1
                 card_set.add(card_name)
-    with open(PROCESSED_DATA_DIR / "test.txt", "w") as test_f:
-        for _, row in test_df.iterrows():
+    with open(PROCESSED_DATA_DIR / "val.txt", "w") as val_f:
+        for _, row in val_df.iterrows():
             card_name, formatted = serialize_card(row)
             if card_name not in card_set:
                 dataset_f.write(formatted)
-                test_f.write(formatted)
-                n_test_set += 1
+                val_f.write(formatted)
+                n_val_set += 1
                 card_set.add(card_name)
 with open(PROCESSED_DATA_DIR / "metadata.json", "w") as metadata_f:
     json.dump(
         {
             "source": str(dataset_path),
-            "test_size": TEST_SIZE,
+            "val_size": VAL_SIZE,
             "n_train_cards": n_train_set,
-            "n_test_cards": n_test_set,
+            "n_val_cards": n_val_set,
         },
         metadata_f,
         indent=2,
     )
 
-print(f"Wrote {n_test_set + n_train_set} cards to {str(PROCESSED_DATA_DIR / 'all.txt')}")
+print(f"Wrote {n_val_set + n_train_set} cards to {str(PROCESSED_DATA_DIR / 'all.txt')}")
 print(f"Wrote {n_train_set} cards to {str(PROCESSED_DATA_DIR / 'train.txt')}")
-print(f"Wrote {n_test_set} cards to {str(PROCESSED_DATA_DIR / 'test.txt')}")
+print(f"Wrote {n_val_set} cards to {str(PROCESSED_DATA_DIR / 'val.txt')}")

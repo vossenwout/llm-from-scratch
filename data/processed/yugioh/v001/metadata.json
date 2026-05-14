@@ -1,6 +1,6 @@
 {
   "source": "data/raw/yugioh-ccd-2025SEP12-163128.csv",
-  "test_size": 0.1,
+  "val_size": 0.1,
   "n_train_cards": 12056,
-  "n_test_cards": 1340
+  "n_val_cards": 1340
 }

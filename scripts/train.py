@@ -25,7 +25,7 @@ torch.manual_seed(42)
 @dataclass
 class DataConfig:
     train_dataset: str
-    test_dataset: str
+    val_dataset: str
 
 
 @dataclass
@@ -47,7 +47,7 @@ TOKENIZER_CONFIG = TokenizerConfig(
 
 DATA_CONFIG = DataConfig(
     train_dataset="data/processed/yugioh/v001/train.txt",
-    test_dataset="data/processed/yugioh/v001/test.txt",
+    val_dataset="data/processed/yugioh/v001/val.txt",
 )
 
 GOOD_TRAIN_CONFIG = TrainConfig(
@@ -72,7 +72,7 @@ GOOD_MODEL_CONFIG = TransformerConfig(
 TRAIN_CONFIG = TrainConfig(
     train_epochs=1000,
     batch_size=64,
-    val_batches=5,
+    val_batches=20,
     adam_beta1=0.9,  # Attention is all you need paper
     adam_beta2=0.98,  # Attention is all you need paper
     adam_eps=1e-9,  # Attention is all you need paper
@@ -92,7 +92,11 @@ MODEL_CONFIG = TransformerConfig(
 
 
 def estimate_val_loss(
-    model: Module, loss_fn: Module, val_dataloader: DataLoader, val_batches: int
+    model: Module,
+    loss_fn: Module,
+    val_dataloader: DataLoader,
+    val_batches: int,
+    device: str,
 ) -> tuple[float, float]:
     model.eval()
     losses = []
@@ -142,6 +146,7 @@ def train(
                     loss_fn=loss_fn,
                     val_dataloader=val_dataloader,
                     val_batches=val_batches,
+                    device=device,
                 )
                 print(
                     f"--- Batch: {batch} / {len(train_dataloader)} "
@@ -200,13 +205,14 @@ train_dataloader = DataLoader(
     batch_size=TRAIN_CONFIG.batch_size,
 )
 
-test_dataloader = DataLoader(
+val_dataloader = DataLoader(
     YuGiOhCardsDataset(
-        dataset_path=DATA_CONFIG.test_dataset,
+        dataset_path=DATA_CONFIG.val_dataset,
         context_length=MODEL_CONFIG.context_length,
         tokenizer=tokenizer,
     ),
-    batch_size=1,
+    batch_size=TRAIN_CONFIG.batch_size,
+    shuffle=True,
 )
 
 loss_fn = CrossEntropyLoss()
@@ -236,7 +242,7 @@ train(
     train_dataloader=train_dataloader,
     val_batches=TRAIN_CONFIG.val_batches,
     train_epochs=TRAIN_CONFIG.train_epochs,
-    val_dataloader=test_dataloader,
+    val_dataloader=val_dataloader,
     device=device,
 )
 
