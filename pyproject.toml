@@ -22,3 +22,8 @@ packages = ["src/llm_from_scratch"]
 
 [tool.ty.environment]
 root = ["./src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

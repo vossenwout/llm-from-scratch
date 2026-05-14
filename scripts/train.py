@@ -41,12 +41,13 @@ class TrainConfig:
 
 # --- Define train params ---
 TOKENIZER_CONFIG = TokenizerConfig(
-    mapping_path="data/dataset-tokenizer.json", tokenizer_type=TokenizerType.CHAR
+    mapping_path="data/processed/yugioh/v001/tokenizer-char.json",
+    tokenizer_type=TokenizerType.CHAR,
 )
 
 DATA_CONFIG = DataConfig(
-    train_dataset="data/train_set_short.txt",
-    test_dataset="data/test_set.txt",
+    train_dataset="data/processed/yugioh/v001/train.txt",
+    test_dataset="data/processed/yugioh/v001/test.txt",
 )
 
 GOOD_TRAIN_CONFIG = TrainConfig(
@@ -80,7 +81,7 @@ TRAIN_CONFIG = TrainConfig(
 
 MODEL_CONFIG = TransformerConfig(
     embedding_dim=128,  # Attention is all you need paper,
-    context_length=32,
+    context_length=256,
     attention_heads=4,  # Attention is all you need paper
     ff_hidden_dim=4 * 128,  # Attention is all you need paper
     n_decoders=2,  # Attention is all you need paper

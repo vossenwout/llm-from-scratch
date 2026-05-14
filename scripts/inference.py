@@ -2,13 +2,19 @@ import torch
 from torch import Tensor
 from llm_from_scratch.transformer import Transformer, TransformerConfig
 from llm_from_scratch.utils import fetch_device
-from llm_from_scratch.tokenizer import CharTokenizer, TokenizerConfig, TokenizerType
+from llm_from_scratch.tokenizer import (
+    CARD_START,
+    CARD_END,
+    CharTokenizer,
+    TokenizerConfig,
+    TokenizerType,
+)
 from pathlib import Path
 
 # --- Params ---
 
 MODEL_PATH = "model/2026-05-13_18-52-43/model.pt"
-TOKENS_TO_GENERATE = 20
+MAX_TOKENS_TO_GENERATE = 1000
 TEMPERATURE = 1.0
 
 # --- End params ---
@@ -63,7 +69,7 @@ def sample_next_token(
         return torch.multinomial(probs, num_samples=1)
 
 
-seed_text = input("Enter seed text to complete: ")
+seed_text = input("Enter seed text to complete: ").lower() or f"{CARD_START}\n"
 input_tokens = tokenizer.encode(seed_text).to(device)
 
 if len(input_tokens) > model_config.context_length:
@@ -74,7 +80,7 @@ if len(input_tokens) > model_config.context_length:
 # 1 x T
 generated = input_tokens.unsqueeze(dim=0)
 
-for _ in range(TOKENS_TO_GENERATE):
+for _ in range(MAX_TOKENS_TO_GENERATE):
     cur_context = generated[:, -model_config.context_length :]
     # 1 x 1
     next_token = sample_next_token(
@@ -82,4 +88,7 @@ for _ in range(TOKENS_TO_GENERATE):
     )
     # 1 x T
     generated = torch.cat((generated, next_token), dim=-1)
-    print(tokenizer.decode(generated.squeeze()))
+    generated_text = tokenizer.decode(generated.squeeze())
+    print(generated_text)
+    if CARD_END in generated_text:
+        break
