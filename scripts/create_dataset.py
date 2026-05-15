@@ -25,11 +25,19 @@ train_df, val_df = train_test_split(
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def clean_rarity(rarity: str):
+    parts = str(rarity).split(" ", maxsplit=1)
+    if len(parts) == 2:
+        return parts[1]
+    return rarity
+
+
 def serialize_card(card_row: Series):
     card_name = card_row["name"].replace('"', "")
     card_description = card_row["description"]
     card_fields = [
         ("name", card_name),
+        ("rarity", clean_rarity(card_row["rarity"])),
         ("type", card_row["type"]),
         ("sub_type", card_row["sub_type"]),
         ("attribute", card_row["attribute"]),
