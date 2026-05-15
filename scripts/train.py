@@ -47,13 +47,18 @@ class TrainConfig:
 
 
 # --- Define train params ---
+# TOKENIZER_CONFIG = TokenizerConfig(
+#    mapping_path="data/processed/yugioh/v001/tokenizer-char.json",
+#    tokenizer_type=TokenizerType.CHAR,
+# )
+
 TOKENIZER_CONFIG = TokenizerConfig(
-    mapping_path="data/processed/yugioh/v001/tokenizer-char.json",
-    tokenizer_type=TokenizerType.CHAR,
+    mapping_path="data/processed/yugioh/v001/tokenizer-bpe.json",
+    tokenizer_type=TokenizerType.BPE,
 )
 
 DATA_CONFIG = DataConfig(
-    train_dataset="data/processed/yugioh/v001/small-train.txt",
+    train_dataset="data/processed/yugioh/v001/train.txt",
     val_dataset="data/processed/yugioh/v001/val.txt",
 )
 
@@ -80,11 +85,11 @@ GOOD_MODEL_CONFIG = TransformerConfig(
 )
 
 TRAIN_CONFIG = TrainConfig(
-    train_epochs=250,
-    batch_size=64,
+    train_epochs=1,
+    batch_size=32,
     val_batches=20,
     log_every_steps=100,
-    checkpoint_every_steps=10,
+    checkpoint_every_steps=1000,
     resume_checkpoint_path=None,
     adam_beta1=0.9,  # Attention is all you need paper
     adam_beta2=0.98,  # Attention is all you need paper
@@ -94,7 +99,7 @@ TRAIN_CONFIG = TrainConfig(
 
 MODEL_CONFIG = TransformerConfig(
     embedding_dim=512,  # Attention is all you need paper,
-    context_length=32,
+    context_length=128,
     attention_heads=8,  # Attention is all you need paper
     ff_hidden_dim=2048,  # Attention is all you need paper
     n_decoders=6,  # Attention is all you need paper
@@ -148,7 +153,7 @@ def train(
     last_train_loss = float("nan")
     end_epoch = start_epoch + train_epochs
     for epoch in range(start_epoch, end_epoch):
-        print(f"--- Epoch: {epoch} ---")
+        print(f"[epoch] start epoch={epoch}")
         epoch_start = time.perf_counter()
         log_start = epoch_start
         log_tokens = 0
@@ -171,13 +176,18 @@ def train(
 
             if global_step % log_every_steps == 0:
                 log_time = time.perf_counter() - log_start
+                tokens_per_second = log_tokens / log_time
+                tokens_per_second_str = (
+                    f"{tokens_per_second / 1000:.1f}k"
+                    if tokens_per_second >= 1000
+                    else f"{tokens_per_second:.0f}"
+                )
                 current_lr = optimizer.param_groups[0]["lr"]
                 print(
-                    f"--- Batch: {batch} / {len(train_dataloader)} "
-                    f"| LR: {current_lr:.8f} "
-                    f"| Train Loss: {loss.item():.4f} "
-                    f"| Batch Time: {log_time / log_batches:.3f}s "
-                    f"| Tok/s: {log_tokens / log_time:.0f}"
+                    f"[train] epoch={epoch} batch={batch}/{len(train_dataloader)} "
+                    f"step={global_step} loss={loss.item():.4f} "
+                    f"lr={current_lr:.2e} batch_time={log_time / log_batches:.3f}s "
+                    f"tok/s={tokens_per_second_str}"
                 )
                 log_start = time.perf_counter()
                 log_tokens = 0
@@ -193,9 +203,8 @@ def train(
                 )
                 last_val_loss = val_loss
                 print(
-                    f"--- Checkpoint: {global_step} "
-                    f"| Val Loss: {val_loss:.4f} "
-                    f"| Perplexity: {perplexity:.4f}"
+                    f"[eval] step={global_step} val_loss={val_loss:.4f} "
+                    f"ppl={perplexity:.2f}"
                 )
                 checkpoint_filename = "checkpoint.pt"
                 if val_loss < best_val_loss:
@@ -218,13 +227,16 @@ def train(
                     training_config=asdict(TRAIN_CONFIG),
                     tokenizer_config=asdict(TOKENIZER_CONFIG),
                 )
-                print("Target")
-                print(f" {tokenizer.decode(y[0])}")
-                print("Predicted")
-                print(f" {tokenizer.decode(pred[0].argmax(dim=-1))}")
+                target_text = tokenizer.decode(y[0]).replace("\n", "\\n")[:300]
+                predicted_text = tokenizer.decode(pred[0].argmax(dim=-1)).replace(
+                    "\n", "\\n"
+                )[:300]
+                print("[sample]")
+                print(f"target:    {target_text}...")
+                print(f"predicted: {predicted_text}...")
 
         epoch_time = time.perf_counter() - epoch_start
-        print(f"--- Epoch {epoch} completed in {epoch_time:.2f}s ---")
+        print(f"[epoch] done epoch={epoch} time={epoch_time:.2f}s")
 
     last_val_loss, perplexity = estimate_val_loss(
         model=model,
@@ -234,9 +246,8 @@ def train(
         device=device,
     )
     print(
-        f"--- Final Checkpoint: {global_step} "
-        f"| Val Loss: {last_val_loss:.4f} "
-        f"| Perplexity: {perplexity:.4f}"
+        f"[final] step={global_step} val_loss={last_val_loss:.4f} "
+        f"ppl={perplexity:.2f}"
     )
     checkpoint_filenames = ["checkpoint.pt"]
     if last_val_loss < best_val_loss:
