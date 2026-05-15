@@ -75,7 +75,11 @@ def sample_next_token(
         return torch.multinomial(probs, num_samples=1)
 
 
-seed_text = input("Enter seed text to complete: ").lower() or f"{CARD_START}\n"
+card_name = input("Enter card name, or leave empty for random: ").lower()
+if card_name:
+    seed_text = f"{CARD_START}\nname: {card_name}\n"
+else:
+    seed_text = f"{CARD_START}\n"
 input_tokens = tokenizer.encode(seed_text).to(device)
 
 if len(input_tokens) > model_config.context_length:
