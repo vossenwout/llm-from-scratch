@@ -14,7 +14,7 @@ from pathlib import Path
 
 # --- Params ---
 
-MODEL_PATH = "model/2026-05-14_12-09-58/model.pt"
+MODEL_PATH = "model/2026-05-15_13-38-43/checkpoint.pt"
 MAX_TOKENS_TO_GENERATE = 1000
 TEMPERATURE = 1.0
 
