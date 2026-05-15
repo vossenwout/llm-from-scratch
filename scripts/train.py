@@ -208,6 +208,7 @@ train_dataloader = DataLoader(
         tokenizer=tokenizer,
     ),
     batch_size=TRAIN_CONFIG.batch_size,
+    shuffle=True,
 )
 
 val_dataloader = DataLoader(
