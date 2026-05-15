@@ -9,6 +9,20 @@ Small decoder-only Transformer implemented in PyTorch, trained from scratch to g
 - `data/`: raw and processed datasets.
 - `model/`: saved training runs and checkpoints.
 
+## Setup
+
+```bash
+uv sync
+```
+
+Optional W&B logging:
+
+```bash
+uv run wandb login
+```
+
+Set `use_wandb=True`, `wandb_entity`, and `wandb_project` in `scripts/train.py` to enable logging. Training and model settings live in `TRAIN_CONFIG` and `MODEL_CONFIG`.
+
 ## Scripts
 
 Run in order:

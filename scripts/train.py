@@ -3,9 +3,11 @@ from dataclasses import dataclass, asdict
 import math
 import time
 import torch
+import wandb
 from torch.utils.data import DataLoader
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from torch.nn import (
     Module,
     CrossEntropyLoss,
@@ -44,6 +46,9 @@ class TrainConfig:
     adam_beta1: float
     adam_beta2: float
     adam_eps: float
+    use_wandb: bool
+    wandb_entity: str | None
+    wandb_project: str | None
 
 
 # --- Define train params ---
@@ -73,6 +78,9 @@ GOOD_TRAIN_CONFIG = TrainConfig(
     adam_beta2=0.98,  # Attention is all you need paper
     adam_eps=1e-9,  # Attention is all you need paper
     warmup_steps=4000,  # Attention is all you need paper
+    use_wandb=True,
+    wandb_entity="pookie",
+    wandb_project="yugioh-card-generator",
 )
 
 GOOD_MODEL_CONFIG = TransformerConfig(
@@ -95,6 +103,9 @@ TRAIN_CONFIG = TrainConfig(
     adam_beta2=0.98,  # Attention is all you need paper
     adam_eps=1e-9,  # Attention is all you need paper
     warmup_steps=2000,  # Attention is all you need paper
+    use_wandb=True,
+    wandb_entity="pookie",
+    wandb_project="yugioh-card-generator",
 )
 
 MODEL_CONFIG = TransformerConfig(
@@ -148,6 +159,7 @@ def train(
     start_epoch: int,
     global_step: int,
     best_val_loss: float,
+    wandb_run: Any | None,
 ):
     model.train()
     last_train_loss = float("nan")
@@ -189,6 +201,17 @@ def train(
                     f"lr={current_lr:.2e} batch_time={log_time / log_batches:.3f}s "
                     f"tok/s={tokens_per_second_str}"
                 )
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "train/loss": loss.item(),
+                            "train/lr": current_lr,
+                            "train/tokens_per_second": tokens_per_second,
+                            "train/batch_time": log_time / log_batches,
+                            "epoch": epoch,
+                        },
+                        step=global_step,
+                    )
                 log_start = time.perf_counter()
                 log_tokens = 0
                 log_batches = 0
@@ -206,6 +229,15 @@ def train(
                     f"[eval] step={global_step} val_loss={val_loss:.4f} "
                     f"ppl={perplexity:.2f}"
                 )
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "val/loss": val_loss,
+                            "val/perplexity": perplexity,
+                            "val/best_loss": min(best_val_loss, val_loss),
+                        },
+                        step=global_step,
+                    )
                 checkpoint_filename = "checkpoint.pt"
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -234,6 +266,14 @@ def train(
                 print("[sample]")
                 print(f"target:    {target_text}...")
                 print(f"predicted: {predicted_text}...")
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            "sample/target": target_text,
+                            "sample/predicted": predicted_text,
+                        },
+                        step=global_step,
+                    )
 
         epoch_time = time.perf_counter() - epoch_start
         print(f"[epoch] done epoch={epoch} time={epoch_time:.2f}s")
@@ -249,6 +289,15 @@ def train(
         f"[final] step={global_step} val_loss={last_val_loss:.4f} "
         f"ppl={perplexity:.2f}"
     )
+    if wandb_run is not None:
+        wandb_run.log(
+            {
+                "val/loss": last_val_loss,
+                "val/perplexity": perplexity,
+                "val/best_loss": min(best_val_loss, last_val_loss),
+            },
+            step=global_step,
+        )
     checkpoint_filenames = ["checkpoint.pt"]
     if last_val_loss < best_val_loss:
         best_val_loss = last_val_loss
@@ -310,6 +359,32 @@ def print_run_config(model: Module, tokenizer: Tokenizer, device: str, run_dir: 
     print(f" - Val batches: {TRAIN_CONFIG.val_batches}")
     print(f" - Log every steps: {TRAIN_CONFIG.log_every_steps}")
     print(f" - Checkpoint every steps: {TRAIN_CONFIG.checkpoint_every_steps}")
+    print(f" - W&B: {TRAIN_CONFIG.use_wandb}")
+    print(f" - W&B entity: {TRAIN_CONFIG.wandb_entity}")
+    print(f" - W&B project: {TRAIN_CONFIG.wandb_project}")
+
+
+def init_wandb(run_dir: Path):
+    if not TRAIN_CONFIG.use_wandb:
+        return None
+
+    if TRAIN_CONFIG.wandb_entity is None or TRAIN_CONFIG.wandb_project is None:
+        raise ValueError("Set wandb_entity and wandb_project when use_wandb=True")
+
+    return wandb.init(
+        entity=TRAIN_CONFIG.wandb_entity,
+        project=TRAIN_CONFIG.wandb_project,
+        name=run_dir.name,
+        config={
+            "model": asdict(MODEL_CONFIG),
+            "training": asdict(TRAIN_CONFIG),
+            "data": asdict(DATA_CONFIG),
+            "tokenizer": {
+                "mapping_path": TOKENIZER_CONFIG.mapping_path,
+                "tokenizer_type": TOKENIZER_CONFIG.tokenizer_type.value,
+            },
+        },
+    )
 
 
 device = fetch_device()
@@ -380,6 +455,7 @@ else:
     print(f"Loaded checkpoint from {TRAIN_CONFIG.resume_checkpoint_path}")
 
 print_run_config(model=model, tokenizer=tokenizer, device=device, run_dir=run_dir)
+wandb_run = init_wandb(run_dir=run_dir)
 
 train(
     model=model,
@@ -398,4 +474,8 @@ train(
     start_epoch=start_epoch,
     global_step=global_step,
     best_val_loss=best_val_loss,
+    wandb_run=wandb_run,
 )
+
+if wandb_run is not None:
+    wandb_run.finish()
