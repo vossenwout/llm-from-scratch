@@ -19,6 +19,7 @@ uv run scripts/create_dataset.py
 uv run scripts/build_tokenizer.py
 uv run scripts/train.py
 uv run scripts/inference.py
+uv run scripts/open_pack.py
 ```
 
 - `download_data.py`: downloads the raw Yu-Gi-Oh card dataset.
@@ -26,5 +27,6 @@ uv run scripts/inference.py
 - `build_tokenizer.py`: builds the char and BPE tokenizers.
 - `train.py`: trains the Transformer and writes checkpoints to `model/`.
 - `inference.py`: loads a checkpoint and generates card text.
+- `open_pack.py`: opens a booster pack of generated cards from your cli :).
 
 Use `checkpoint.pt` to resume training and `best_model.pt` for inference.
