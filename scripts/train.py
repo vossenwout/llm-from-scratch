@@ -1,6 +1,7 @@
 from torch.optim.lr_scheduler import LRScheduler
 from dataclasses import dataclass, asdict
 import math
+import time
 import torch
 from torch.utils.data import DataLoader
 from datetime import datetime
@@ -37,6 +38,7 @@ class TrainConfig:
     batch_size: int
     warmup_steps: int
     val_batches: int
+    log_every_steps: int
     checkpoint_every_steps: int
     resume_checkpoint_path: str | None
     adam_beta1: float
@@ -59,6 +61,7 @@ GOOD_TRAIN_CONFIG = TrainConfig(
     train_epochs=250,
     batch_size=64,
     val_batches=20,
+    log_every_steps=100,
     checkpoint_every_steps=1000,
     resume_checkpoint_path=None,
     adam_beta1=0.9,  # Attention is all you need paper
@@ -80,6 +83,7 @@ TRAIN_CONFIG = TrainConfig(
     train_epochs=250,
     batch_size=64,
     val_batches=20,
+    log_every_steps=100,
     checkpoint_every_steps=10,
     resume_checkpoint_path=None,
     adam_beta1=0.9,  # Attention is all you need paper
@@ -134,6 +138,7 @@ def train(
     device: str,
     tokenizer: Tokenizer,
     run_dir: Path,
+    log_every_steps: int,
     checkpoint_every_steps: int,
     start_epoch: int,
     global_step: int,
@@ -141,10 +146,13 @@ def train(
 ):
     model.train()
     last_train_loss = float("nan")
-    last_val_loss = float("nan")
     end_epoch = start_epoch + train_epochs
     for epoch in range(start_epoch, end_epoch):
         print(f"--- Epoch: {epoch} ---")
+        epoch_start = time.perf_counter()
+        log_start = epoch_start
+        log_tokens = 0
+        log_batches = 0
         for batch, (X, y) in enumerate(train_dataloader):
             # B x T, B x T
             X, y = X.to(device), y.to(device)
@@ -158,14 +166,22 @@ def train(
             optimizer.zero_grad()
             global_step += 1
             last_train_loss = loss.item()
+            log_tokens += X.numel()
+            log_batches += 1
 
-            if batch % 100 == 0:
+            if global_step % log_every_steps == 0:
+                log_time = time.perf_counter() - log_start
                 current_lr = optimizer.param_groups[0]["lr"]
                 print(
                     f"--- Batch: {batch} / {len(train_dataloader)} "
                     f"| LR: {current_lr:.8f} "
-                    f"| Train Loss: {loss.item():.4f}"
+                    f"| Train Loss: {loss.item():.4f} "
+                    f"| Batch Time: {log_time / log_batches:.3f}s "
+                    f"| Tok/s: {log_tokens / log_time:.0f}"
                 )
+                log_start = time.perf_counter()
+                log_tokens = 0
+                log_batches = 0
 
             if global_step % checkpoint_every_steps == 0:
                 val_loss, perplexity = estimate_val_loss(
@@ -206,6 +222,9 @@ def train(
                 print(f" {tokenizer.decode(y[0])}")
                 print("Predicted")
                 print(f" {tokenizer.decode(pred[0].argmax(dim=-1))}")
+
+        epoch_time = time.perf_counter() - epoch_start
+        print(f"--- Epoch {epoch} completed in {epoch_time:.2f}s ---")
 
     last_val_loss, perplexity = estimate_val_loss(
         model=model,
@@ -278,6 +297,7 @@ def print_run_config(model: Module, tokenizer: Tokenizer, device: str, run_dir: 
     print(f" - Batch size: {TRAIN_CONFIG.batch_size}")
     print(f" - Warmup steps: {TRAIN_CONFIG.warmup_steps}")
     print(f" - Val batches: {TRAIN_CONFIG.val_batches}")
+    print(f" - Log every steps: {TRAIN_CONFIG.log_every_steps}")
     print(f" - Checkpoint every steps: {TRAIN_CONFIG.checkpoint_every_steps}")
 
 
@@ -362,6 +382,7 @@ train(
     device=device,
     tokenizer=tokenizer,
     run_dir=run_dir,
+    log_every_steps=TRAIN_CONFIG.log_every_steps,
     checkpoint_every_steps=TRAIN_CONFIG.checkpoint_every_steps,
     start_epoch=start_epoch,
     global_step=global_step,

@@ -6,3 +6,4 @@ def fetch_device():
     if current_accelerator and accelerator.is_available():
         return current_accelerator.type
     return "cpu"
+

@@ -1,3 +1,4 @@
+import time
 import torch
 from torch import Tensor
 from llm_from_scratch.transformer import Transformer, TransformerConfig
@@ -84,6 +85,8 @@ if len(input_tokens) > model_config.context_length:
 
 # 1 x T
 generated = input_tokens.unsqueeze(dim=0)
+generation_start = time.perf_counter()
+generated_tokens = 0
 
 for _ in range(MAX_TOKENS_TO_GENERATE):
     cur_context = generated[:, -model_config.context_length :]
@@ -93,7 +96,10 @@ for _ in range(MAX_TOKENS_TO_GENERATE):
     )
     # 1 x T
     generated = torch.cat((generated, next_token), dim=-1)
+    generated_tokens += 1
     generated_text = tokenizer.decode(generated.squeeze())
+    tokens_per_second = generated_tokens / (time.perf_counter() - generation_start)
     print(generated_text)
+    print(f"Tok/s: {tokens_per_second:.2f}")
     if CARD_END in generated_text:
         break
