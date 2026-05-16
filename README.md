@@ -48,7 +48,7 @@ Use `checkpoint.pt` to resume training and `best_model.pt` for inference.
 
 ### Sample card pack 
 
-
+```bash
 Press Enter to reveal card 1/5...
 
 +--------------------------------------------------------------------------------+
@@ -154,3 +154,4 @@ Pack Summary
 3. Ultra Rare         wishes of the white forest
 4. Common             tree shark
 5. Super Rare         bujingi cugin
+```
