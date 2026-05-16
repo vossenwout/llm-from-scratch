@@ -18,7 +18,7 @@ from llm_from_scratch.utils import fetch_device
 
 # --- Params ---
 
-MODEL_PATH = "model/2026-05-15_17-36-01/best_model.pt"
+MODEL_PATH = "model/small-model/best_model.pt"
 PACK_SIZE = 5
 MAX_TOKENS_TO_GENERATE = 500
 TEMPERATURE = 0.9
@@ -32,7 +32,15 @@ BLUE = "\033[34m"
 PURPLE = "\033[35m"
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
-FIELD_NAMES = {"type", "sub_type", "attribute", "rank", "attack", "defense", "description"}
+FIELD_NAMES = {
+    "type",
+    "sub_type",
+    "attribute",
+    "rank",
+    "attack",
+    "defense",
+    "description",
+}
 
 
 def rarity_color(rarity: str) -> str:

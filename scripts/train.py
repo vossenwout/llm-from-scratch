@@ -67,30 +67,6 @@ DATA_CONFIG = DataConfig(
     val_dataset="data/processed/yugioh/v001/val.txt",
 )
 
-GOOD_TRAIN_CONFIG = TrainConfig(
-    train_epochs=250,
-    batch_size=64,
-    val_batches=20,
-    log_every_steps=100,
-    checkpoint_every_steps=1000,
-    resume_checkpoint_path=None,
-    adam_beta1=0.9,  # Attention is all you need paper
-    adam_beta2=0.98,  # Attention is all you need paper
-    adam_eps=1e-9,  # Attention is all you need paper
-    warmup_steps=4000,  # Attention is all you need paper
-    use_wandb=True,
-    wandb_entity="pookie",
-    wandb_project="yugioh-card-generator",
-)
-
-GOOD_MODEL_CONFIG = TransformerConfig(
-    embedding_dim=512,  # Attention is all you need paper,
-    context_length=32,
-    attention_heads=8,  # Attention is all you need paper
-    ff_hidden_dim=2048,  # Attention is all you need paper
-    n_decoders=6,  # Attention is all you need paper
-    p_dropout=0.1,  # Attention is all you need paper
-)
 
 TRAIN_CONFIG = TrainConfig(
     train_epochs=1,
@@ -286,8 +262,7 @@ def train(
         device=device,
     )
     print(
-        f"[final] step={global_step} val_loss={last_val_loss:.4f} "
-        f"ppl={perplexity:.2f}"
+        f"[final] step={global_step} val_loss={last_val_loss:.4f} ppl={perplexity:.2f}"
     )
     if wandb_run is not None:
         wandb_run.log(

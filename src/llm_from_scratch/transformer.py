@@ -268,7 +268,7 @@ class PosEncoding(Module):
 
 
 class Transformer(Module):
-    """Decoder-only Transformed as presented in Attention is all you need paper"""
+    """Decoder-only Transformer as presented in Attention is all you need paper"""
 
     def __init__(
         self,
@@ -289,7 +289,6 @@ class Transformer(Module):
             embedding_dim=embedding_dim,
             p_dropout=p_dropout,
         )
-        self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
         self.decoders = ModuleList(
             [
                 Decoder(
@@ -302,8 +301,10 @@ class Transformer(Module):
                 for _ in range(n_decoders)
             ]
         )
+        self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
 
     def forward(self, input_ids: Tensor) -> Tensor:
+        # input: B x T
         # B x T x C
         x = self.embedding(input_ids) * math.sqrt(self.embedding.embedding_dim)
         # B x T x C
