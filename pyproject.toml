@@ -1,11 +1,12 @@
 [project]
 name = "llm-from-scratch"
 version = "0.1.0"
-description = "Add your description here"
+description = "A decoder-only Transformer and educational inference engine implemented in PyTorch"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "kagglehub>=1.0.1",
+    "matplotlib>=3.10.0",
     "pandas>=3.0.2",
     "scikit-learn>=1.8.0",
     "tokenizers>=0.23.1",
@@ -21,9 +22,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_from_scratch"]
 
-
-[tool.ty.environment]
-root = ["./src"]
 
 [dependency-groups]
 dev = [

@@ -9,6 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-.DS_store
+.DS_Store
 model/*
 wandb
