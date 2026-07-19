@@ -111,7 +111,9 @@ class BPETokenizer(Tokenizer):
         return tensor(self.tokenizer.encode(s).ids)
 
     def decode(self, ix: Tensor) -> str:
-        return self.tokenizer.decode(ix.tolist(), skip_special_tokens=False)
+        if ix.shape[-1] > 1:
+            return self.tokenizer.decode(ix.tolist(), skip_special_tokens=False)
+        return self.tokenizer.decode([int(ix.item())], skip_special_tokens=False)
 
     def get_type(self) -> TokenizerType:
         return TokenizerType.BPE

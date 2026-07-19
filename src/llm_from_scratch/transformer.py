@@ -11,6 +11,7 @@ from torch.nn import (
     Dropout,
 )
 from torch import Tensor
+from llm_from_scratch.kv_cache import KVCache
 
 
 @dataclass
@@ -69,9 +70,29 @@ class Decoder(Module):
         self.ff = FeedForward(embedding_dim=embedding_dim, hidden_dim=ff_hidden_dim)
         self.dropout = Dropout(p=p_dropout)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self,
+        x: Tensor,
+        layer_idx: int,
+        kv_cache=None,
+        request_ids: list[str] | None = None,
+        start_positions: Tensor | None = None,
+        use_cache: bool = False,
+    ) -> Tensor:
         # B x T x C
-        x = self.dropout(self.masked_multi_head_attention(x)) + x
+        x = (
+            self.dropout(
+                self.masked_multi_head_attention(
+                    x=x,
+                    layer_idx=layer_idx,
+                    kv_cache=kv_cache,
+                    request_ids=request_ids,
+                    start_positions=start_positions,
+                    use_cache=use_cache,
+                )
+            )
+            + x
+        )
         x = self.layer_norm_1(x)
         x = self.dropout(self.ff(x)) + x
         return self.layer_norm_2(x)
@@ -145,7 +166,15 @@ class MultiHeadAttentionSeq(Module):
         )
         self.wo = Linear(embedding_dim, embedding_dim)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self,
+        x: Tensor,
+        layer_idx: int = 0,
+        kv_cache=None,
+        request_ids: list[str] | None = None,
+        start_positions: Tensor | None = None,
+        use_cache: bool = False,
+    ) -> Tensor:
         # input is B x T x C
         # each B x T x d
         x_heads = [head(x) for head in self.heads]
@@ -196,13 +225,11 @@ class MultiHeadAttention(Module):
         self.register_buffer("mask", mask)
         self.wo = Linear(embedding_dim, embedding_dim)
 
-    def forward(self, x: Tensor) -> Tensor:
-        # input is B x T x C
-        B, T, C = (
-            x.shape[0],
-            x.shape[1],
-            x.shape[2],
-        )
+    def _shape_qkv(
+        self,
+        x: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        B, T, _ = x.shape
         # B x T x h * d
         q, k, v = self.wq(x), self.wk(x), self.wv(x)
         # B x T x h x d
@@ -217,23 +244,84 @@ class MultiHeadAttention(Module):
             k.transpose(1, 2),
             v.transpose(1, 2),
         )
-        # B x h x T x T
+        return q, k, v
+
+    def _attention(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        attention_mask: Tensor | None = None,
+    ) -> Tensor:
+        # B x h x T_new x c
         q_kt = q @ k.transpose(-2, -1)
         q_kt = q_kt / math.sqrt(self.head_dim)
-        if self.masked:  # can't attent future tokens
+        if attention_mask is not None:
             q_kt = q_kt.masked_fill(
-                self.mask[:T, :T], float("-inf")
+                attention_mask, float("-inf")
             )  # -inf instead of 0 as we can have negatives
         q_kt = q_kt.softmax(dim=-1)
+        # B x h x T_new x d
+        return q_kt @ v
 
-        # B x h x T x d
-        v_q_kt = q_kt @ v
+    def forward(
+        self,
+        x: Tensor,
+        layer_idx: int = 0,
+        kv_cache: KVCache | None = None,
+        request_ids: list[str] | None = None,
+        start_positions: Tensor | None = None,
+        use_cache: bool = False,
+    ) -> Tensor:
+        # x is B x T x C
+        # start_positions is B
+        B, T, C = (
+            x.shape[0],
+            x.shape[1],
+            x.shape[2],
+        )
+        if use_cache:
+            if kv_cache is None:
+                raise ValueError("use_cache true but no kv_cache passed")
+            if start_positions is None:
+                raise ValueError("use_cache true but no start_positions passed")
+            # start pos is index of first token inside model context window that we need to process
+            # ! during decode x != full context as we only pass the last/new token !
+            # todo: make this work correctly with batches
+            start_pos = int(start_positions[0].item())
+            # each B x h x T x d
+            q_new, k_new, v_new = self._shape_qkv(x=x)
+            kv_cache.append_batch(
+                layer_idx=layer_idx,
+                keys=k_new,
+                values=v_new,
+                start_positions=start_positions,
+            )
+            # do we also need to modify here to correctly handle batches?
+            # each B x h x start_positions + T x d
+            k, v = kv_cache.get_batch(
+                layer_idx=layer_idx, end_positions=start_positions + T
+            )
+            attention_mask = None
+            if self.masked:
+                attention_mask = self.mask[start_pos : start_pos + T, : start_pos + T]
+            # B x h x T x d
+            x = self._attention(q=q_new, k=k, v=v, attention_mask=attention_mask)
+        else:
+            # each B x h x T x d
+            q, k, v = self._shape_qkv(x=x)
+            attention_mask = None
+            if self.masked:
+                attention_mask = self.mask[:T, :T]
+            # B x h x T x d
+            x = self._attention(q=q, k=k, v=v, attention_mask=attention_mask)
+
         # B x T x h x d
-        v_q_kt = v_q_kt.transpose(1, 2)
+        x = x.transpose(1, 2)
         # B x T x C
-        v_q_kt = v_q_kt.reshape(B, T, C)
+        x = x.reshape(B, T, C)
         # B x T x C
-        return self.wo(v_q_kt)
+        return self.wo(x)
 
 
 class PosEncoding(Module):
@@ -258,13 +346,19 @@ class PosEncoding(Module):
 
         self.register_buffer("pos_encoding", pos_encoding)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, start_positions: Tensor | None = None) -> Tensor:
         assert x.shape[1] <= self.pos_encoding.shape[0], (
             "Passed more tokens than model context length"
         )
         # B x T x C
+        # todo: make this work correctly with batches
+        start_pos = 0
+        if start_positions is not None:
+            start_pos = int(start_positions[0].item())
         # slicing because during inference we don't have all T yet.
-        return self.dropout(x + self.pos_encoding[: x.shape[1], :])
+        return self.dropout(
+            x + self.pos_encoding[start_pos : start_pos + x.shape[1], :]
+        )
 
 
 class Transformer(Module):
@@ -303,15 +397,29 @@ class Transformer(Module):
         )
         self.linear = Linear(in_features=embedding_dim, out_features=vocab_size)
 
-    def forward(self, input_ids: Tensor) -> Tensor:
+    def forward(
+        self,
+        input_ids: Tensor,
+        kv_cache=None,
+        request_ids: list[str] | None = None,
+        start_positions: Tensor | None = None,
+        use_cache: bool = False,
+    ) -> Tensor:
         # input: B x T
         # B x T x C
         x = self.embedding(input_ids) * math.sqrt(self.embedding.embedding_dim)
         # B x T x C
-        x = self.pos_encoding(x)
+        x = self.pos_encoding(x=x, start_positions=start_positions)
         # B x T x C
-        for decoder in self.decoders:
-            x = decoder(x)
+        for i, decoder in enumerate(self.decoders):
+            x = decoder(
+                x=x,
+                layer_idx=i,
+                kv_cache=kv_cache,
+                request_ids=request_ids,
+                start_positions=start_positions,
+                use_cache=use_cache,
+            )
         # B x T x V
         logits = self.linear(x)
         return logits

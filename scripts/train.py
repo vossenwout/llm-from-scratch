@@ -63,34 +63,34 @@ TOKENIZER_CONFIG = TokenizerConfig(
 )
 
 DATA_CONFIG = DataConfig(
-    train_dataset="data/processed/yugioh/v001/train.txt",
-    val_dataset="data/processed/yugioh/v001/val.txt",
+    train_dataset="data/processed/yugioh/v001/small-train.txt",
+    val_dataset="data/processed/yugioh/v001/small-train.txt",
 )
 
 
 TRAIN_CONFIG = TrainConfig(
     train_epochs=1,
-    batch_size=32,
-    val_batches=20,
-    log_every_steps=100,
+    batch_size=1,
+    val_batches=1,
+    log_every_steps=1,
     checkpoint_every_steps=1000,
     resume_checkpoint_path=None,
-    adam_beta1=0.9,  # Attention is all you need paper
-    adam_beta2=0.98,  # Attention is all you need paper
-    adam_eps=1e-9,  # Attention is all you need paper
-    warmup_steps=2000,  # Attention is all you need paper
-    use_wandb=True,
-    wandb_entity="pookie",
-    wandb_project="yugioh-card-generator",
+    adam_beta1=0.9,
+    adam_beta2=0.98,
+    adam_eps=1e-9,
+    warmup_steps=1,
+    use_wandb=False,
+    wandb_entity=None,
+    wandb_project=None,
 )
 
 MODEL_CONFIG = TransformerConfig(
-    embedding_dim=512,  # Attention is all you need paper,
-    context_length=128,
-    attention_heads=8,  # Attention is all you need paper
-    ff_hidden_dim=2048,  # Attention is all you need paper
-    n_decoders=6,  # Attention is all you need paper
-    p_dropout=0.1,  # Attention is all you need paper
+    embedding_dim=1024,
+    context_length=4096,
+    attention_heads=8,
+    ff_hidden_dim=4096,
+    n_decoders=8,
+    p_dropout=0.0,
 )
 
 # --- End train params ---
