@@ -1,0 +1,512 @@
+\documentclass{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+
+\title{LLM Math}
+\author{Wout Vossen}
+
+\begin{document}
+
+\maketitle
+
+\section{Notation and Assumptions}
+
+\begin{table}[ht]
+	\centering
+	\begin{tabular}{|c|l|}
+		\hline
+		Symbol & Description \\
+		\hline
+		$B$ & Batch size \\
+		$T$ & Context length of passed input \\
+		$T_q$ & Context length of the query tensor \\
+		$T_k$ & Context length of the key tensor \\
+		$C$ & Model hidden dim (embedding dim) \\
+		$H$ & Number of attention heads \\
+		$H_d$ & Hidden dim of attention heads, where $H_d = C/H$\\
+		$\mathrm{FF}_C$ & Hidden dim of feed forward layers\\
+		$L$ & Number of decoder layers \\
+		$V$ & Vocabulary size\\
+		\hline
+	\end{tabular}
+	\caption{Notation used through the analysis.}
+	\label{tab:notation}
+\end{table}
+
+\begin{itemize}
+	\item FLOPs: Total floating point operations
+	\item Calculations are based on decoder as described in "Attention is all you need"
+	\item During prefill, the query and key sequence lengths both equal the input context length, so $T_q = T_k = T$.
+	\item A multiply-accumulate is approximated as 2 FLOPs (one multiplication and one addition).
+	\item I don't count softmaxes, ReLU's, layer norms, reshapings, operations with constants, concats, applications of attention masks as those are trivial compared to the matmuls that happen in the decoder layer.
+\end{itemize}
+
+
+\section{Prefill / forward pass}
+
+Let's go through all the major operations of the forward pass during prefill in order of appearance. This would also correspond to the FLOPs necessary for a decode pass without a KV cache.
+
+\subsection{Embedding / Positional Encodings}
+
+Embeddings are simple lookups and do no floating point operations. We do add a positional encoding to each of the hidden dimensions, which is why we do have FLOPs. These are however trivial compared to the decoder layer.
+
+\begin{align}
+	\text{Input shape}  &= \boxed{\text{B x T}} \\
+	\text{Output shape} &= \boxed{\text{B x T x C}} \\
+	\text{FLOPs}        &= \boxed{BTC}
+\end{align}
+
+
+\subsection{Decoder: Q, K, V projections}
+
+For each decoder layer $L$ we do a multiplication with Q, K, V matrices. With dimensions \text{C x C} with a $C / H = H_d$ of adjacent columns representing each head.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times T \times C}, \\
+\text{Output shape} &= \boxed{B \times H \times T \times H_d}, \\
+\text{FLOPs}
+   &= L \times 3 \times 2 \times B \times T \times C \times C \\
+   &= \boxed{6L BTC^2}.
+\end{align}
+
+\subsection{Decoder: Attention $QK^{\mathsf{T}}$}
+
+For each decoder layer $L$ we do a multiplication of the query and transpose of key projection.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times H \times T_q \times H_d}, \\
+\text{Output shape} &= \boxed{B \times H \times T_q \times T_k}, \\
+\text{FLOPs}
+   &= L \times 2 \times B \times H \times T_q \times H_d \times T_k \\
+   &= \boxed{2L BCT^2}.
+\end{align}
+
+\subsection{Decoder: Attention $\operatorname{softmax}(QK^{\mathsf{T}})V$}
+
+For each decoder layer $L$ we multiply the output of the query-key multiplication with the value projection.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times H \times T_q \times T_k}, \\
+\text{Output shape} &= \boxed{B \times H \times T_q \times H_d}, \\
+\text{FLOPs}
+   &= L \times 2 \times B \times H \times T_q \times T_k \times H_d \\
+   &= \boxed{2L BCT^2}.
+\end{align}
+
+
+\subsection{Decoder: Linear attention projection}
+
+For each decoder layer a multiplication with a linear layer is done on the concatenation of the multi-head attention.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times T \times C}, \\
+\text{Output shape} &= \boxed{B \times T \times C}, \\
+\text{FLOPs}
+   &= L \times 2 \times B \times T \times C \times C\\
+   &= \boxed{2LBTC^2}.
+\end{align}
+
+
+\subsection{Decoder: Feed forward}
+
+In each decoder layer we put the output of attention through a two-layer feed-forward network which first projects from $C$ to $\mathrm{FF}_C$ and then back from $\mathrm{FF}_C$ to $C$.
+
+
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times T \times C}, \\
+\text{Output shape} &= \boxed{B \times T \times C}, \\
+\text{FLOPs}
+   &= L \left(
+       2 \times B \times T \times C \times \mathrm{FF}_C
+       + 2 \times B \times T \times \mathrm{FF}_C \times C
+   \right) \\
+   &= \boxed{4LBTC\mathrm{FF}_C}.
+\end{align}
+
+
+\subsection{Language modelling output projection}
+
+After the final decoder layer, we project each hidden representation from the model dimension $C$ to the vocabulary dimension $V$. This produces one logit for every vocabulary item at each token position.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times T \times C}, \\
+\text{Output shape} &= \boxed{B \times T \times V}, \\
+\text{FLOPs}
+   &= 2 \times B \times T \times C \times V \\
+   &= \boxed{2BTCV}.
+\end{align}
+
+
+\subsection{Total}
+
+The total amount of FLOPs in the prefill stage corresponds to:
+
+\begin{align}
+\text{FLOPs}
+&= BTC
++ 6LBTC^2
++ 2LBCT^2
++ 2LBCT^2
++ 2LBTC^2
++ 4LBTC\mathrm{FF}_C
++ 2BTCV \\
+&= \boxed{
+   BTC
+   + 8LBTC^2
+   + 4LBCT^2
+   + 4LBTC\mathrm{FF}_C
+   + 2BTCV
+ }.
+\end{align}
+
+
+\section{Decoding Stage with KV cache}
+
+During the decoding stage, instead of passing $T$ tokens, we only pass one new token together with a KV cache containing the previously computed keys and values. Here, $T_q = 1$ and $T = T_k$ denotes the total number of key-value entries available in the KV cache, including the current token. This simplifies many of the calculations.
+
+\subsection{Embedding / Positional Encodings}
+
+\begin{align}
+	\text{Input shape}  &= \boxed{\text{B x 1}} \\
+	\text{Output shape} &= \boxed{\text{B x 1 x C}} \\
+	\text{FLOPs}        &= \boxed{BC}
+\end{align}
+
+
+\subsection{Decoder: Q, K, V projections}
+
+As we have cached the K and V of the previously processed tokens we only need to do these projections for the single new token.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times 1 \times C}, \\
+\text{Output shape} &= \boxed{B \times H \times 1 \times H_d}, \\
+\text{FLOPs}
+   &= L \times 3 \times 2 \times B \times 1 \times C \times C \\
+   &= \boxed{6L BC^2}.
+\end{align}
+
+
+\subsection{Decoder: Attention $QK^{\mathsf{T}}$}
+
+The benefit here is that we now only have one $T_q$ token. This means FLOPs no longer scale quadratically with context length.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times H \times 1 \times H_d}, \\
+\text{Output shape} &= \boxed{B \times H \times 1 \times T_k}, \\
+\text{FLOPs}
+   &= L \times 2 \times B \times H \times 1 \times H_d \times T_k \\
+   &= \boxed{2L BCT}.
+\end{align}
+
+\subsection{Decoder: Attention $\operatorname{softmax}(QK^{\mathsf{T}})V$}
+
+Also in the multiplication with the value projection it is a huge benefit that FLOPs don't scale quadratically with the context length anymore.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times H \times 1 \times T_k}, \\
+\text{Output shape} &= \boxed{B \times H \times 1 \times H_d}, \\
+\text{FLOPs}
+   &= L \times 2 \times B \times H \times 1 \times T_k \times H_d \\
+   &= \boxed{2L BCT}.
+\end{align}
+
+
+\subsection{Decoder: Linear attention projection}
+
+As we only pass one token for each batch this also becomes more efficient.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times 1 \times C}, \\
+\text{Output shape} &= \boxed{B \times 1 \times C}, \\
+\text{FLOPs}
+   &= L \times 2 \times B \times 1 \times C \times C\\
+   &= \boxed{2LBC^2}.
+\end{align}
+
+
+\subsection{Decoder: Feed forward}
+
+We also make sure the feed forward doesn't scale with context length anymore.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times 1 \times C}, \\
+\text{Output shape} &= \boxed{B \times 1 \times C}, \\
+\text{FLOPs}
+   &= L \left(
+       2 \times B \times 1 \times C \times \mathrm{FF}_C
+       + 2 \times B \times 1 \times \mathrm{FF}_C \times C
+   \right) \\
+   &= \boxed{4LBC\mathrm{FF}_C}.
+\end{align}
+
+\subsection{Language modelling output projection}
+
+We also only predict the next token for the last token not for every token in the context.
+
+\begin{align}
+\text{Input shape}  &= \boxed{B \times 1 \times C}, \\
+\text{Output shape} &= \boxed{B \times 1 \times V}, \\
+\text{FLOPs}
+   &= 2 \times B \times 1 \times C \times V \\
+   &= \boxed{2BCV}.
+\end{align}
+
+\subsection{Total}
+
+The total amount of FLOPs in the decode stage with a KV-cache stage corresponds to:
+
+\begin{align}
+\text{FLOPs}
+&= BC
++ 6LBC^2
++ 2LBCT
++ 2LBCT
++ 2LBC^2
++ 4LBC\mathrm{FF}_C
++ 2BCV \\
+&= \boxed{
+   BC
+   + 8LBC^2
+   + 4LBCT
+   + 4LBC\mathrm{FF}_C
+   + 2BCV
+ }.
+\end{align}
+
+To predict the next token we effectively made the flops scale linearly with the context length, T instead of quadratically. However it is important that this is the FLOPs to predict 1 new token. When predicting a sequence of new tokens, T itself also scales linearly as we continuously add the K, V of the new token to the KV cache which makes the FLOPs necessary to generate a sequence of length T still quadratic in terms of T. 
+
+\noindent
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\textbf{Without KV Cache}
+
+\small
+\begin{align*}
+\mathrm{FLOPs}_{\text{no cache}}
+={}& BTC \\
+ &+ 8LBTC^2 \\
+ &+ 4LBCT^2 \\
+ &+ 4LBTC\mathrm{FF}_C \\
+ &+ 2BTCV
+\end{align*}
+
+\normalsize
+\[
+\text{Attention scaling: } \boxed{\mathcal{O}(T^2)}
+\]
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\textbf{With KV Cache}
+
+\small
+\begin{align*}
+\mathrm{FLOPs}_{\text{cache}}
+={}& BC \\
+ &+ 8LBC^2 \\
+ &+ 4LBCT \\
+ &+ 4LBC\mathrm{FF}_C \\
+ &+ 2BCV
+\end{align*}
+
+\normalsize
+\[
+\text{Attention scaling: } \boxed{\mathcal{O}(T)}
+\]
+\end{minipage}
+
+\section{Memory}
+
+We estimate the amount of data read from memory. We use 32-bit floating-point values, so each parameter occupies 4 bytes. This estimate undercounts total memory traffic because intermediate activations must also be written to and read from memory.
+
+\subsection{Prefill and Decode Without a KV Cache}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|c|}
+    \hline
+    Data read & Number of elements \\
+    \hline
+    Embeddings & $B \times T \times C$ \\
+    Positional encodings & $T \times C$ \\
+    Q, K, V projection weights & $3 \times L \times C \times C$ \\
+    Attention output projection weights & $L \times C \times C$ \\
+    Feed-forward weights & $2 \times L \times C \times \mathrm{FF}_C$ \\
+    Language modelling head weights & $C \times V$ \\
+    \hline
+\end{tabular}
+\caption{Estimated elements read during prefill or decode without a KV cache.}
+\label{tab:memory-reads-no-cache}
+\end{table}
+
+The total number of elements read is:
+
+\begin{align}
+N_{\mathrm{read}}
+   ={}& B \times T \times C
+      + T \times C
+      + 3 \times L \times C \times C \\
+     &+ L \times C \times C
+      + 2 \times L \times C \times \mathrm{FF}_C
+      + C \times V \\
+   ={}& \boxed{
+      BTC + TC + 4LC^2 + 2LC\mathrm{FF}_C + CV
+      }.
+\end{align}
+
+Because each element occupies 4 bytes:
+
+\begin{equation}
+M_{\mathrm{read}}
+   = 4\left(
+      BTC + TC + 4LC^2 + 2LC\mathrm{FF}_C + CV
+      \right) \text{ bytes}.
+\end{equation}
+
+\subsection{Additional KV-Cache Reads During Decode}
+
+During decoding with a KV cache, both the cached keys and cached values must be read:
+
+\begin{align}
+N_{\mathrm{KV\ read}}
+   &= 2 \times B \times L \times T \times H \times H_d \\
+   &= \boxed{2BLTC}.
+\end{align}
+
+In bytes, this is:
+
+\begin{equation}
+M_{\mathrm{KV\ read}}
+   = 4\left(2BLTC\right) \text{ bytes}.
+\end{equation}
+
+\section{Roofline Math}
+
+Arithmetic intensity is the number of floating-point operations performed per byte read from memory:
+
+\begin{equation}
+I = \frac{\mathrm{FLOPs}}{M_{\mathrm{read}}}.
+\end{equation}
+
+\subsection{Prefill}
+
+\begin{align}
+I_{\mathrm{prefill}}
+&=
+\frac{
+BTC + 8LBTC^2 + 4LBCT^2 + 4LBTC\mathrm{FF}_C + 2BTCV
+}{
+4\left(BTC + TC + 4LC^2 + 2LC\mathrm{FF}_C + CV\right)
+} \\
+&=
+\frac{
+BTC\left(1 + 8LC + 4LT + 4L\mathrm{FF}_C + 2V\right)
+}{
+4C\left(T(B+1) + 4LC + 2L\mathrm{FF}_C + V\right)
+} \\
+&= \boxed{
+\frac{
+BT\left(1 + 8LC + 4LT + 4L\mathrm{FF}_C + 2V\right)
+}{
+4\left(T(B+1) + 4LC + 2L\mathrm{FF}_C + V\right)
+}
+}.
+\end{align}
+
+\subsection{Decode With a KV Cache}
+
+\begin{align}
+I_{\mathrm{decode}}
+&=
+\frac{
+BC + 8LBC^2 + 4LBCT + 4LBC\mathrm{FF}_C + 2BCV
+}{
+4\left(BC + C + 4LC^2 + 2LC\mathrm{FF}_C + CV + 2LBTC\right)
+} \\
+&=
+\frac{
+BC\left(1 + 8LC + 4LT + 4L\mathrm{FF}_C + 2V\right)
+}{
+4C\left(B + 1 + 4LC + 2L\mathrm{FF}_C + V + 2LBT\right)
+} \\
+&= \boxed{
+\frac{
+B\left(1 + 8LC + 4LT + 4L\mathrm{FF}_C + 2V\right)
+}{
+4\left(B + 1 + 4LC + 2L\mathrm{FF}_C + V + 2LBT\right)
+}
+}.
+\end{align}
+
+\subsection{Arithmetic Intensity of My Transformer}
+
+I trained a transformer from scratch and used it for my KV-cache experiments. Its parameters are:
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{|c|r|}
+    \hline
+    Parameter & Value \\
+    \hline
+    $L$ & 8 \\
+    $C$ & 1024 \\
+    $\mathrm{FF}_C$ & 4096 \\
+    $T$ & 4096 \\
+    $V$ & 4096 \\
+    $B$ & 1 \\
+    \hline
+\end{tabular}
+\caption{Parameters used for the arithmetic-intensity calculation.}
+\label{tab:model-parameters}
+\end{table}
+
+Filling these parameters into the equations above gives:
+
+\begin{align}
+I_{\mathrm{prefill}} &\approx 3109.94 \text{ FLOPs/byte}, \\
+I_{\mathrm{decode}}  &\approx 0.50 \text{ FLOPs/byte}.
+\end{align}
+
+Remember these values are an upper bound as my memory transfer estimates do not include writing and reading of intermediate activation results within the transformer.
+
+We can compare these arithmetic intensities with the operations per byte supported by some well-known GPUs:
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{|c|l|l|l|}
+   \hline
+   GPU & TFLOPS FP32 Tensor & Bandwidth (TB/s) &
+Ops/Byte \\
+   \hline
+   M1 Pro   & 4.6   & 0.20 & 23 \\
+   RTX 5080 & 56.28 & 0.96 & 58.625 \\
+   A100     & 312   & 1.50 & 208 \\
+   H100     & 989   & 3.35 & 295.22 \\
+   B200     & 2500  & 8.00 & 312.5 \\
+   Rubin    & 2000  & 22.0 & 90.9 \\
+   \hline
+\end{tabular}
+\caption{GPU compute performance and memory bandwidth.}
+\label{tab:gpu-performance}
+\end{table}
+
+From this we can conclude that prefill stage is compute-bound, while the decode stage is memory-bound under this model. This means that using a GPU with more FP32 GFLOPs but the same memory bandwidth primarily benefits prefill. Improving decode performance instead requires greater memory bandwidth or reduced memory traffic.
+
+\subsection{Effect of Batch Size}
+
+Increasing the batch size allows the model weights to be reused across more tokens. With $B=100$, the estimated decode arithmetic intensity increases to:
+
+\begin{equation}
+I_{\mathrm{decode},\,B=100} \approx 1.26 \text{ FLOPs/byte}.
+\end{equation}
+
+The improvement remains limited because KV-cache traffic also scales with batch size. At the maximum context length, the FP32 KV cache alone would exceed $26$ GB, excluding model weights and activation memory.
+
+\section{Conclusion}
+
+A KV cache makes the FLOPs of each decode step scale linearly instead of quadratic in terms of the current context length. This substantially reduces the computation required to predict the next token, but it also lowers arithmetic intensity. This makes prefill compute-bound while decode is memory-bound. This also shows that simply using a GPU with more GFLOPs doesn't necessarily improve throughput.
+
+\end{document}

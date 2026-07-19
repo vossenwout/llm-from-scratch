@@ -253,7 +253,7 @@ class MultiHeadAttention(Module):
         v: Tensor,
         attention_mask: Tensor | None = None,
     ) -> Tensor:
-        # B x h x T_new x T
+        # B x h x T_new x c
         q_kt = q @ k.transpose(-2, -1)
         q_kt = q_kt / math.sqrt(self.head_dim)
         if attention_mask is not None:

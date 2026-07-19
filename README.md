@@ -151,20 +151,41 @@ Per-request contiguous KV cache
 Caching the outputs of the K and V projection matrices for past tokens speeds up inference because they do not have to be recomputed during every decode step.
 
 
-As described in [Transformer Inference Arithmetic](https://kipp.ly/p/transformer-inference-arithmetic), repeatedly projecting the full growing context costs approximately:
+I derived the FLOP counts for predicting one new token with and without a KV cache. The complete derivation is available as a [PDF](docs/inference-arithmetic/transformer-inference-arithmetic.pdf) or as [LaTeX source](docs/inference-arithmetic/transformer-inference-arithmetic.tex).
+
+Without a KV cache, we process the full context again:
 
 ```text
-Naive K/V projection:  O(T² · d_model² · n_layers)
-Cached K/V projection: O(T  · d_model² · n_layers)
+FLOPs_no_cache =
+    BTC
+    + 8LBTC²
+    + 4LBCT²
+    + 4LBTC·FF_C
+    + 2BTCV
 ```
 
-The cache uses additional memory:
+With a KV cache, we process only the new token and reuse the keys and values of the previous tokens:
+
+```text
+FLOPs_KV_cache =
+    BC
+    + 8LBC²
+    + 4LBCT
+    + 4LBC·FF_C
+    + 2BCV
+```
+
+The attention term changes from `4LBCT²` to `4LBCT`. For one decode step, attention therefore scales linearly instead of quadratically with the current context length.
+
+For my model with a batch size of 1 and a context length of 4096, my idealized roofline calculation gives an arithmetic intensity of approximately **3109.94 FLOPs/byte for prefill** and **0.50 FLOPs/byte for decode**. Which confirms that prefill is compute-bound while decode is memory-bound.
+
+However the cache uses additional memory:
 
 ```text
 KV bytes per token = 2 × n_layers × n_heads × d_head × bytes_per_element
 ```
 
-The first factor stores both K and V. Avoiding recomputation lowers arithmetic intensity, so decoding becomes increasingly memory-bandwidth-bound.
+Which can quickly make the KV cache grow into the Gigabytes.
 
 ### Experiment
 

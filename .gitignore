@@ -12,3 +12,11 @@ wheels/
 .DS_Store
 model/*
 wandb
+
+# LaTeX build artifacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
