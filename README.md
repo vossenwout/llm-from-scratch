@@ -151,7 +151,7 @@ Per-request contiguous KV cache
 Caching the outputs of the K and V projection matrices for past tokens speeds up inference because they do not have to be recomputed during every decode step.
 
 
-I derived the FLOP counts for predicting one new token with and without a KV cache. The complete derivation is available as a [PDF](docs/inference-arithmetic/transformer-inference-arithmetic.pdf) or as [LaTeX source](docs/inference-arithmetic/transformer-inference-arithmetic.tex).
+I derived the FLOP counts for predicting one new token with and without a KV cache. The complete derivation is available as a [PDF](docs/inference-arithmetic/transformer-inference-arithmetic.pdf).
 
 Without a KV cache, we process the full context again:
 
