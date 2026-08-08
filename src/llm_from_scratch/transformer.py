@@ -51,20 +51,12 @@ class Decoder(Module):
         vectorized: bool = True,
     ):
         super().__init__()
-        if vectorized:  # for benchmarking
-            self.masked_multi_head_attention = MultiHeadAttention(
-                embedding_dim=embedding_dim,
-                attention_heads=attention_heads,
-                context_length=context_length,
-                masked=True,
-            )
-        else:
-            self.masked_multi_head_attention = MultiHeadAttentionSeq(
-                embedding_dim=embedding_dim,
-                attention_heads=attention_heads,
-                context_length=context_length,
-                masked=True,
-            )
+        self.masked_multi_head_attention = MultiHeadAttention(
+            embedding_dim=embedding_dim,
+            attention_heads=attention_heads,
+            context_length=context_length,
+            masked=True,
+        )
         self.layer_norm_1 = LayerNorm(embedding_dim)
         self.layer_norm_2 = LayerNorm(embedding_dim)
         self.ff = FeedForward(embedding_dim=embedding_dim, hidden_dim=ff_hidden_dim)
@@ -96,92 +88,6 @@ class Decoder(Module):
         x = self.layer_norm_1(x)
         x = self.dropout(self.ff(x)) + x
         return self.layer_norm_2(x)
-
-
-class Attention(Module):
-    """Attention as described by Attention is all you need"""
-
-    mask: Tensor
-
-    def __init__(
-        self,
-        embedding_dim: int,
-        head_dim: int,
-        context_length: int,
-        masked: bool,
-    ):
-        super().__init__()
-        self.masked = masked
-        self.head_dim = head_dim
-        self.wq = Linear(embedding_dim, head_dim, bias=False)
-        self.wk = Linear(embedding_dim, head_dim, bias=False)
-        self.wv = Linear(embedding_dim, head_dim, bias=False)
-
-        mask = torch.ones(context_length, context_length, dtype=torch.bool).triu(
-            diagonal=1
-        )
-        self.register_buffer("mask", mask)
-
-    def forward(self, x: Tensor) -> Tensor:
-        # input is B x T x C
-        # each B x T x d
-        q, k, v = self.wq(x), self.wk(x), self.wv(x)
-        # B x T x T
-        q_kt = q @ k.transpose(1, 2)
-        q_kt = q_kt / math.sqrt(self.head_dim)
-        if self.masked:  # can't attend future tokens
-            T = x.shape[1]
-            q_kt = q_kt.masked_fill(
-                self.mask[:T, :T], float("-inf")
-            )  # -inf instead of 0 as we can have negatives
-        q_kt = q_kt.softmax(dim=-1)
-        # B x T x d
-        return q_kt @ v
-
-
-class MultiHeadAttentionSeq(Module):
-    """Non vectorized MultiHeadAttention"""
-
-    def __init__(
-        self,
-        embedding_dim: int,
-        attention_heads: int,
-        context_length: int,
-        masked: bool,
-    ):
-        super().__init__()
-        assert embedding_dim % attention_heads == 0, (
-            "embedding_dim must be divisible by attention_heads"
-        )
-        self.heads = ModuleList(
-            [
-                Attention(
-                    embedding_dim=embedding_dim,
-                    head_dim=embedding_dim // attention_heads,
-                    context_length=context_length,
-                    masked=masked,
-                )
-                for _ in range(attention_heads)
-            ]
-        )
-        self.wo = Linear(embedding_dim, embedding_dim)
-
-    def forward(
-        self,
-        x: Tensor,
-        layer_idx: int = 0,
-        kv_cache=None,
-        request_ids: list[str] | None = None,
-        start_positions: Tensor | None = None,
-        use_cache: bool = False,
-    ) -> Tensor:
-        # input is B x T x C
-        # each B x T x d
-        x_heads = [head(x) for head in self.heads]
-        # B x T x C
-        x = torch.cat(tensors=x_heads, dim=-1)
-        # B x T x C
-        return self.wo(x)
 
 
 class MultiHeadAttention(Module):
