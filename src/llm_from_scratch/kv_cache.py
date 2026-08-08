@@ -15,14 +15,6 @@ class KVCacheConfig:
 
 
 class KVCache:
-    """
-    Simple contiguous kv cache
-
-    Stores:
-        keys: [n_layers, B, H, max_seq_len, D]
-        values: [n_layers, B, H, max_seq_len, D]
-    """
-
     def __init__(self, config: KVCacheConfig):
         self.config = config
         self.reset()

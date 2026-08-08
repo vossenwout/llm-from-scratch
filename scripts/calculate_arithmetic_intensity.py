@@ -14,13 +14,13 @@ V = 4096
 # Prefill / decode without KV cache
 
 I_prefill = (B * T * (1 + (8 * L * C) + (4 * L * T) + (4 * L * FF_C) + (2 * V))) / (
-    4 * (T * (B + 1) + (4 * L * C) + (2 * L * FF_C) + V)
+    4 * (T * (B + 1) + (3 * L * C) + (2 * L * FF_C) + V)
 )
 print(f"Arithmetic intensity prefill: {I_prefill}")
 # Decode with a KV cache
 
 I_decode = (B * (1 + (8 * L * C) + (4 * L * T) + (4 * L * FF_C) + (2 * V))) / (
-    4 * (B + 1 + (4 * L * C) + (2 * L * FF_C) + V + (2 * L * B * T))
+    4 * (B + 1 + (3 * L * C) + (2 * L * FF_C) + V + (2 * L * B * T))
 )
 
 print(f"Arithmetic intensity decode: {I_decode}")
