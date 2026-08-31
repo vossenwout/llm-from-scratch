@@ -1,6 +1,7 @@
 from uuid import uuid4
 import torch
 from dataclasses import dataclass
+from llm_from_scratch.attention import AttentionBackendName
 from llm_from_scratch.generation import SamplingParams
 from llm_from_scratch.transformer import Transformer, TransformerConfig
 from llm_from_scratch.generation import sample_next_token
@@ -31,6 +32,8 @@ class InferenceEngineConfig:
     use_paged_cache: bool = False  # not supported yet (WIP)
     num_blocks: int = 1024
     block_size: int = 16
+    prefill_attention_backend: AttentionBackendName = AttentionBackendName.EAGER
+    decode_attention_backend: AttentionBackendName = AttentionBackendName.EAGER
 
 
 @dataclass
@@ -84,6 +87,8 @@ class InferenceEngine:
             attention_heads=self.model_config.attention_heads,
             n_decoders=self.model_config.n_decoders,
             p_dropout=0,
+            prefill_attention_backend=self.config.prefill_attention_backend,
+            decode_attention_backend=self.config.decode_attention_backend,
         ).to(self.config.device)
         self.model.load_state_dict(model_checkpoint["model_state_dict"])
         self.model.eval()
@@ -202,7 +207,7 @@ class InferenceEngine:
                             head_dim=self.model_config.embedding_dim
                             // self.model_config.attention_heads,
                             device=self.config.device,
-                            dtype=torch.float,
+                            dtype=next(self.model.parameters()).dtype,
                         )
                     )
                     self.request_caches[request.request_id] = cache
@@ -214,9 +219,13 @@ class InferenceEngine:
                             1, dtype=torch.long, device=self.config.device
                         ),
                         use_cache=True,
+                        is_prefill=True,
                     )[:, -1, :]
                 else:
-                    logits = self.model(input_ids=request.input_ids)[:, -1, :]
+                    logits = self.model(
+                        input_ids=request.input_ids,
+                        is_prefill=True,
+                    )[:, -1, :]
 
                 next_token_id = sample_next_token(
                     logits=logits, params=request.sampling_params

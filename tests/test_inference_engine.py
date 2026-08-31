@@ -1,5 +1,6 @@
 import torch
 
+from llm_from_scratch.attention import AttentionBackendName
 from llm_from_scratch.generation import SamplingParams
 from llm_from_scratch.kv_cache import KVCache, KVCacheConfig
 from llm_from_scratch.paged_kv_cache import PagedKVCache, PagedKVCacheConfig
@@ -23,6 +24,8 @@ def test_cached_decode_matches_full_forward():
         ff_hidden_dim=16,
         n_decoders=2,
         p_dropout=0,
+        prefill_attention_backend=AttentionBackendName.EAGER,
+        decode_attention_backend=AttentionBackendName.EAGER,
     ).eval()
     cache = KVCache(
         KVCacheConfig(
@@ -44,6 +47,7 @@ def test_cached_decode_matches_full_forward():
             kv_cache=cache,
             start_positions=torch.tensor([0]),
             use_cache=True,
+            is_prefill=True,
         )
         cached_logits = model(
             input_ids[:, 4:],

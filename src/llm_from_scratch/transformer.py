@@ -11,6 +11,7 @@ from torch.nn import (
     Dropout,
 )
 from torch import Tensor
+from llm_from_scratch.attention import AttentionBackendName, create_attention_backend
 from llm_from_scratch.kv_cache import KVCache
 
 
@@ -49,6 +50,8 @@ class Decoder(Module):
         context_length: int,
         p_dropout: float,
         vectorized: bool = True,
+        prefill_attention_backend: AttentionBackendName = AttentionBackendName.EAGER,
+        decode_attention_backend: AttentionBackendName = AttentionBackendName.EAGER,
     ):
         super().__init__()
         self.masked_multi_head_attention = MultiHeadAttention(
@@ -56,6 +59,8 @@ class Decoder(Module):
             attention_heads=attention_heads,
             context_length=context_length,
             masked=True,
+            prefill_attention_backend=prefill_attention_backend,
+            decode_attention_backend=decode_attention_backend,
         )
         self.layer_norm_1 = LayerNorm(embedding_dim)
         self.layer_norm_2 = LayerNorm(embedding_dim)
@@ -70,6 +75,7 @@ class Decoder(Module):
         request_ids: list[str] | None = None,
         start_positions: Tensor | None = None,
         use_cache: bool = False,
+        is_prefill: bool = False,
     ) -> Tensor:
         # B x T x C
         x = (
@@ -81,6 +87,7 @@ class Decoder(Module):
                     request_ids=request_ids,
                     start_positions=start_positions,
                     use_cache=use_cache,
+                    is_prefill=is_prefill,
                 )
             )
             + x
@@ -101,6 +108,8 @@ class MultiHeadAttention(Module):
         attention_heads: int,
         context_length: int,
         masked: bool,
+        prefill_attention_backend: AttentionBackendName = AttentionBackendName.EAGER,
+        decode_attention_backend: AttentionBackendName = AttentionBackendName.EAGER,
     ):
         super().__init__()
         assert embedding_dim % attention_heads == 0, (
@@ -125,6 +134,10 @@ class MultiHeadAttention(Module):
         )
 
         self.masked = masked
+        self.prefill_attention = create_attention_backend(prefill_attention_backend)
+        self.decode_attention = create_attention_backend(decode_attention_backend)
+        # Retained for compatibility with existing checkpoints. Attention
+        # backends now construct or fuse their own causal mask.
         mask = torch.ones(context_length, context_length, dtype=torch.bool).triu(
             diagonal=1
         )
@@ -152,24 +165,6 @@ class MultiHeadAttention(Module):
         )
         return q, k, v
 
-    def _attention(
-        self,
-        q: Tensor,
-        k: Tensor,
-        v: Tensor,
-        attention_mask: Tensor | None = None,
-    ) -> Tensor:
-        # B x h x T_new x c
-        q_kt = q @ k.transpose(-2, -1)
-        q_kt = q_kt / math.sqrt(self.head_dim)
-        if attention_mask is not None:
-            q_kt = q_kt.masked_fill(
-                attention_mask, float("-inf")
-            )  # -inf instead of 0 as we can have negatives
-        q_kt = q_kt.softmax(dim=-1)
-        # B x h x T_new x d
-        return q_kt @ v
-
     def forward(
         self,
         x: Tensor,
@@ -178,6 +173,7 @@ class MultiHeadAttention(Module):
         request_ids: list[str] | None = None,
         start_positions: Tensor | None = None,
         use_cache: bool = False,
+        is_prefill: bool = False,
     ) -> Tensor:
         # x is B x T x C
         # start_positions is B
@@ -208,19 +204,27 @@ class MultiHeadAttention(Module):
             k, v = kv_cache.get_batch(
                 layer_idx=layer_idx, end_positions=start_positions + T
             )
-            attention_mask = None
-            if self.masked:
-                attention_mask = self.mask[start_pos : start_pos + T, : start_pos + T]
             # B x h x T x d
-            x = self._attention(q=q_new, k=k, v=v, attention_mask=attention_mask)
+            attention = self.prefill_attention if is_prefill else self.decode_attention
+            x = attention(
+                q=q_new,
+                k=k,
+                v=v,
+                causal=self.masked,
+                query_start_pos=start_pos,
+            )
         else:
             # each B x h x T x d
             q, k, v = self._shape_qkv(x=x)
-            attention_mask = None
-            if self.masked:
-                attention_mask = self.mask[:T, :T]
             # B x h x T x d
-            x = self._attention(q=q, k=k, v=v, attention_mask=attention_mask)
+            attention = self.prefill_attention if is_prefill else self.decode_attention
+            x = attention(
+                q=q,
+                k=k,
+                v=v,
+                causal=self.masked,
+                query_start_pos=0,
+            )
 
         # B x T x h x d
         x = x.transpose(1, 2)
@@ -279,6 +283,8 @@ class Transformer(Module):
         ff_hidden_dim: int,
         n_decoders: int,
         p_dropout: float,
+        prefill_attention_backend: AttentionBackendName = AttentionBackendName.EAGER,
+        decode_attention_backend: AttentionBackendName = AttentionBackendName.EAGER,
     ):
         super().__init__()
         self.embedding = Embedding(
@@ -297,6 +303,8 @@ class Transformer(Module):
                     context_length=context_length,
                     ff_hidden_dim=ff_hidden_dim,
                     p_dropout=p_dropout,
+                    prefill_attention_backend=prefill_attention_backend,
+                    decode_attention_backend=decode_attention_backend,
                 )
                 for _ in range(n_decoders)
             ]
@@ -310,6 +318,7 @@ class Transformer(Module):
         request_ids: list[str] | None = None,
         start_positions: Tensor | None = None,
         use_cache: bool = False,
+        is_prefill: bool = False,
     ) -> Tensor:
         # input: B x T
         # B x T x C
@@ -325,6 +334,7 @@ class Transformer(Module):
                 request_ids=request_ids,
                 start_positions=start_positions,
                 use_cache=use_cache,
+                is_prefill=is_prefill,
             )
         # B x T x V
         logits = self.linear(x)
