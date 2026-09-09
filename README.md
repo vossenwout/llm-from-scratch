@@ -144,6 +144,22 @@ Per-request contiguous KV cache
 
 `generate()` is a blocking convenience API over the request-oriented `add_request()` and `step()` methods. Cached requests currently run sequentially with an independent contiguous KV cache; tensor batching is planned.
 
+Prefill and decode attention backends are independently configurable. `EAGER` uses basic PyTorch operations; `FLASH` uses my very own (poorly optimized :() Triton FlashAttention kernel.
+
+```python
+from llm_from_scratch.attention import AttentionBackendName
+
+engine = InferenceEngine(
+    InferenceEngineConfig(
+        model_path="model/long-context/best_model.pt",
+        device="cuda",
+        use_kv_cache=True,
+        prefill_attention_backend=AttentionBackendName.FLASH,
+        decode_attention_backend=AttentionBackendName.FLASH,
+    )
+)
+```
+
 ### Current speedups
 
 #### KV-Cache
